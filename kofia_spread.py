@@ -10,6 +10,11 @@ import exchange_calendars as xcals
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+==공휴일 처리==
+    if not xkrx.is_session(today):
+        print(f"{today.date()} 비영업일 - 종료")
+        sys.exit(0)
+
 # ===== 환경변수 =====
 MONTHS       = int(os.getenv("MONTHS", "3"))
 BOND_GB      = os.getenv("BOND_GB", "7")
