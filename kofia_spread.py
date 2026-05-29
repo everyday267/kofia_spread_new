@@ -10,10 +10,7 @@ import exchange_calendars as xcals
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-==공휴일 처리==
-    if not xkrx.is_session(today):
-        print(f"{today.date()} 비영업일 - 종료")
-        sys.exit(0)
+
 
 # ===== 환경변수 =====
 MONTHS       = int(os.getenv("MONTHS", "3"))
@@ -32,8 +29,8 @@ KST  = timezone(timedelta(hours=9))
 xkrx = xcals.get_calendar("XKRX")
 today = pd.Timestamp(datetime.now(KST).date())
 if not xkrx.is_session(today):
-    # 비영업일이면 직전 영업일로
-    pass
+    print(f"{today.date()} 비영업일 - 종료")
+    sys.exit(0)   
 TO_DT = xkrx.previous_session(today).date().strftime("%Y%m%d")
 print(f"기준 영업일: {TO_DT}")
 
