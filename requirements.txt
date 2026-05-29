@@ -1,0 +1,6 @@
+requests
+pandas
+openpyxl
+python-dateutil
+urllib3
+exchange-calendars
