@@ -6,6 +6,9 @@ on:
     - cron: "47 23 * * 0-4"   # backup: KST 08:47
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" # opt into Node 24 explicitly
+
 jobs:
   run:
     runs-on: ubuntu-latest
