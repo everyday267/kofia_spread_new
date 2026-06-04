@@ -6,10 +6,34 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" # opt into Node 24 explicitly
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  check-businessday:
+    runs-on: ubuntu-latest
+    outputs:
+      is_open: ${{ steps.check.outputs.is_open }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install exchange_calendars pandas
+      - id: check
+        run: |
+          python - <<'EOF'
+          import os, pandas as pd, exchange_calendars as xcals
+          from datetime import datetime, timezone, timedelta
+          kst = timezone(timedelta(hours=9))
+          today = pd.Timestamp(datetime.now(kst).date())
+          is_open = xcals.get_calendar("XKRX").is_session(today)
+          print(f"KST today: {today.date()}, KRX open: {is_open}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"is_open={'true' if is_open else 'false'}\n")
+          EOF
+
   run:
+    needs: check-businessday
+    if: needs.check-businessday.outputs.is_open == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
