@@ -189,3 +189,4 @@ Python 3.11+ 권장.
 
 - v1.0 — 초기 버전 (Zoho → Gmail SMTP 전환, GitHub Actions 자동화)
 - v1.1 — 영업일 체크 버그 수정 (`pass` → `sys.exit(0)`), cron KST 08:30 적용
+- v1.2 - 영업일 체크를 workflow단에서 체크하여 skip여부 결정, cron KST 06:30 적용
