@@ -26,10 +26,8 @@ jobs:
           kst = timezone(timedelta(hours=9))
           today = pd.Timestamp(datetime.now(kst).date())
           xkrx = xcals.get_calendar("XKRX")
-          prev = xkrx.previous_session(today).date()
-          yesterday = (today - pd.Timedelta(days=1)).date()
-          is_open = (prev == yesterday)
-          print(f"KST today: {today.date()}, yesterday: {yesterday}, prev KRX session: {prev}, fire: {is_open}")
+          is_open = xkrx.is_session(today)
+          print(f"KST today: {today.date()}, is_open: {is_open}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"is_open={'true' if is_open else 'false'}\n")
           EOF
