@@ -135,7 +135,8 @@ try:
     mode = send_via_gmail(SMTP_HOST, SMTP_PORT, SENDER_EMAIL,
                           SENDER_PW.replace(" ", ""), RECIPIENTS, msg)
     print(f"메일 발송 완료 ({SMTP_HOST}, {mode}) → {RECIPIENTS}")
-except smtplib.SMTPAuthenticationError:
-    print("인증 실패: Gmail 앱 비밀번호 16자리 확인"); sys.exit(1)
+except smtplib.SMTPAuthenticationError as e:
+    detail = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+    print(f"인증 실패: Gmail 앱 비밀번호 16자리 확인 (서버 응답: {e.smtp_code} {detail})"); sys.exit(1)
 except Exception as e:
     print(f"메일 발송 실패: {type(e).__name__}: {e}"); sys.exit(1)
