@@ -1,0 +1,31 @@
+name: Keepalive
+
+# GitHub는 레포에 60일간 새 커밋이 없으면 스케줄 워크플로우를 자동 비활성화한다
+# (state: disabled_inactivity). 워크플로우 "실행"은 활동으로 집계되지 않고 오직
+# "커밋"만 타이머를 리셋하므로, 매월 2회 소소한 커밋을 남겨 kofia.yml 과 이 워크플로우
+# 자신이 모두 계속 살아있도록 유지한다.
+
+on:
+  schedule:
+    - cron: "23 5 1,15 * *"   # 매월 1일·15일 05:23 UTC (약 2주 간격, 60일 한참 이내)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refresh keepalive marker
+        run: |
+          mkdir -p .github
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/keepalive
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive
+          git commit -m "chore: keepalive (prevent scheduled-workflow auto-disable)" \
+            || { echo "변경 없음 — 커밋 생략"; exit 0; }
+          git push
