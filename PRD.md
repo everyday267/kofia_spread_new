@@ -328,7 +328,8 @@ python kofia_spread.py
   3. 워크플로우 파일이 default 브랜치(main)에 없음 — schedule 트리거는 **main의 파일만** 읽음
   4. GitHub Actions 자체 장애
 - **조치**:
-  1. Actions 탭에서 "This workflow was disabled" 배너 확인 → Enable + 아무 커밋 하나 push. 예방책: 60일 내 주기적 커밋.
+  1. **60일 무활동 자동 정지 (`state: disabled_inactivity`)** — 가장 흔한 원인. 워크플로우 "실행"은 활동으로 안 쳐주고 오직 **커밋만** 60일 타이머를 리셋한다. **커밋을 새로 해도 자동으로 다시 켜지지 않으므로**, Actions 탭에서 워크플로우 선택 → "This workflow was disabled …" 배너의 **Enable workflow** 버튼을 반드시 한 번 수동 클릭해야 한다. 진단: `GET /actions/workflows/{id}` 의 `state` 확인.
+     - **예방(적용됨)**: `.github/workflows/keepalive.yml` 이 매월 1일·15일 소소한 커밋(`.github/keepalive` 타임스탬프)을 남겨 타이머를 계속 리셋한다. keepalive 자신도 이 커밋으로 함께 살아남는다. 단, keepalive의 push 는 기본 `GITHUB_TOKEN` 을 쓰므로 레포 **Settings → Actions → General → Workflow permissions** 가 **Read and write** 여야 동작한다 (권한 부족 시 push 실패 → keepalive 무력화).
   2. cron 검증: KST 시각 −9h → UTC. 자정을 역으로 넘으면 요일 −1. 현재 값 `"23 21 * * 0-4"` = KST 월~금 06:23이 정답 기준.
   3. 브랜치에서만 수정했다면 main에 머지.
 
