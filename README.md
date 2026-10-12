@@ -189,7 +189,7 @@ Gmail SMTP 첨부 한도는 **25MB** 입니다. 조회 기간을 12개월 이상
 - 보증료 밴드 · SGI보증물 프리미엄 입력칸 (브라우저에 기억)
 - AA- / A+ / A / A- **보증차익** 타일: 최근값, 1개월 변동, 3년 %ile, 보증료 대비 순차익
 - 신호: 보증차익 3년 상위 20% · 1주 ±10bp 급변 · A-↔BBB+ 격차 1개월 +10bp 확대
-- 차트 2종(마우스 오버 시 일자별 값): 보증차익 + 보증료 밴드 / 국고대비 스프레드(정부보증·AAA~BBB+)
+- 차트 2종(마우스 오버 시 일자별 값): 보증차익 + 보증료 밴드 / 국고대비 스프레드(AAA~BBB+)
 - 등급별 요약표, 최근 60영업일 원자료 표
 
 | 지표 | 계산 |
@@ -199,17 +199,26 @@ Gmail SMTP 첨부 한도는 **25MB** 입니다. 조회 기간을 12개월 이상
 | 순차익(bp) | 보증차익 − SGI보증물 프리미엄 |
 | %ile | 최근 3년 분포 내 위치 (높을수록 스프레드 넓음) |
 
-### 잔존만기(remainDayCnt)
+### KOFIA 요청 코드 (2026-10-12 화면 컴포넌트에서 확인)
 
-KOFIA 화면의 `조회기간` 드롭다운(`schRemainDayCnt`)은 이름과 달리 **잔존만기**(3월·6월·9월·1년·1년6개월·2년·2년6개월·3년·5년)이고, 조회 기간은 `조회일` from~to(`standardDt`~`uStandardDt`)가 정합니다. v1.2는 `remainDayCnt`에 `MONTHS`를 넣어 3개월물을 받고 있었으므로, v2.0에서 둘을 분리했습니다(기본 요청은 동일).
+| 화면 항목 | 요청 필드 | 값 |
+|---|---|---|
+| 스프레드 / 수익률 | `wrkGbn` | `TBOND_SPRD`(국고 대비 스프레드) / `BOND_ROP`(수익률) |
+| 채권종류 | `bondGbCode` | 특수채 `3` · 은행채 `5` · 기타금융채 `6` · **회사채 `7`** |
+| 잔존만기 (화면 라벨은 '조회기간') | `remainDayCnt` | 개월 수: `3` `6` `9` `12` `18` `24` `30` `36` `60` |
+| 조회일 from~to | `standardDt` ~ `uStandardDt` | `YYYYMMDD` |
+
+- 응답의 기준일(`standardDt`)은 `YYYY-MM-DD` 형식 → 이력에서는 `YYYYMMDD`로 정규화
+- `TBOND_SPRD` 응답: `val1` = 국고채 금리(%), `val2~` = 등급별 스프레드(%p). 회사채는 AAA~BBB- 10개 등급
+- 수익률 = 국고채 금리 + 스프레드로 계산 가능 (`BOND_ROP` 응답과 0.01%p 이내로 일치 확인)
+- 5년치 단건 조회도 응답함(약 9초). 백필은 12개월 단위로 분할 조회
+- v1.2는 `remainDayCnt`에 `MONTHS`를 넣었지만 값이 3이라 3개월물이 맞게 조회되고 있었음. v2.0에서 분리
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `REMAIN_DAY_CNT` | `3` | 메일용 잔존만기 (3 = 국고 3개월물) |
-| `HISTORY_TENORS` | `3` | 대시보드에 쌓을 잔존만기 목록 (콤마) |
-| `BACKFILL_MONTHS` | `0` | Run workflow 입력값. 예: `60` → 5년치를 12개월 단위로 나눠 적재 |
-
-**1년물·3년물 코드 확인 방법**: 3월 이외 옵션의 전송값은 아직 미확인입니다. 화면에서 잔존만기를 `1년`으로 바꾸고 조회 → 개발자도구 **Network** 탭 → `XMLSERVICES` 요청 → Payload에서 `<remainDayCnt>` 값을 확인. `12`라면 `HISTORY_TENORS: "3,12,36"`처럼 확장 후 `backfill_months`로 한 번 더 실행하세요.
+| `HISTORY_TENORS` | `3,12,36` (workflow) | 대시보드에 쌓을 잔존만기 목록 |
+| `BACKFILL_MONTHS` | `0` | Run workflow 입력값. 예: `60` → 5년치 적재 |
 
 ### 최초 1회
 
@@ -220,6 +229,7 @@ KOFIA 화면의 `조회기간` 드롭다운(`schRemainDayCnt`)은 이름과 달�
 ### 오프라인 점검
 
 ```bash
+python tests/test_real_fixture.py              # 실제 응답 구조(fixtures)로 파서·이력·대시보드 점검
 python tests/offline_run.py                    # 합성 XML로 수집→메일(.eml)→이력→대시보드까지 실행 (임시 폴더)
 BACKFILL_MONTHS=60 python tests/offline_run.py # 백필 경로
 python spread_dashboard.py                     # data/spread_history.csv만으로 docs/index.html 재생성

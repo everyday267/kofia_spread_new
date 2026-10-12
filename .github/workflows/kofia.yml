@@ -60,7 +60,7 @@ jobs:
           MONTHS: "3"
           BOND_GB: "7"
           REMAIN_DAY_CNT: "3"                # 메일용 잔존만기 (3 = 국고 3개월물)
-          HISTORY_TENORS: "3"                # 대시보드 잔존만기 목록 — 코드 확인 후 "3,12,36" 등
+          HISTORY_TENORS: "3,12,36"          # 대시보드 잔존만기 (3개월·1년·3년)
           BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months || '0' }}
           SENDER_EMAIL: ${{ secrets.GMAIL_SENDER }}
           SENDER_PW:    ${{ secrets.GMAIL_APP_PW }}

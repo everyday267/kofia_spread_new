@@ -17,7 +17,7 @@ MONTHS       = int(os.getenv("MONTHS", "3"))        # 조회기간(개월) — �
 BOND_GB      = os.getenv("BOND_GB", "7")
 # 잔존만기 — KOFIA remainDayCnt (화면 라벨은 '조회기간'이지만 실제는 잔존만기 선택칸 schRemainDayCnt)
 REMAIN_DAY_CNT = os.getenv("REMAIN_DAY_CNT", "3")   # 메일용: 3 = 국고 3개월물
-# 대시보드 이력용 잔존만기 목록 (콤마). 값 확인 후 확장: README §잔존만기 코드
+# 대시보드 이력용 잔존만기 목록 (콤마). 코드 = 개월 수: 3·6·9·12·18·24·30·36·60
 HISTORY_TENORS = [x.strip() for x in os.getenv("HISTORY_TENORS", REMAIN_DAY_CNT).split(",") if x.strip()]
 BACKFILL_MONTHS = int(os.getenv("BACKFILL_MONTHS", "0") or 0)   # >0: 이력 일괄 적재(수동 실행)
 SENDER_EMAIL = os.environ["SENDER_EMAIL"]

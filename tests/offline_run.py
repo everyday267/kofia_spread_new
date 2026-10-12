@@ -1,6 +1,6 @@
 """KOFIA 접속·메일 발송 없이 kofia_spread.py 전체를 실행해 보는 오프라인 점검.
 
-- requests.Session  → 합성 XML 응답 (실제와 같은 태그 구조, 등급 값 = 국고 대비 스프레드 %p)
+- requests.Session  → 합성 XML 응답 (실제와 같은 태그 구조: 기준일 YYYY-MM-DD, val1=국고 금리 %, val2~ = 등급 스프레드 %p)
 - smtplib.SMTP      → 발송 대신 output/mail_preview.eml 저장
 - exchange_calendars 미설치 환경이면 주말만 휴장으로 대체
 
@@ -34,8 +34,9 @@ except ImportError:
     sys.modules["exchange_calendars"] = types.SimpleNamespace(get_calendar=lambda _: _Cal())
 
 # ---------- 합성 시장 ----------
-GRADES = ["정부보증", "AAA", "AA+", "AA0", "AA-", "A+", "A0", "A-", "BBB+", "BBB0", "BBB-"]
-BASE = [0.12, 0.17, 0.22, 0.28, 0.33, 0.55, 0.75, 1.00, 2.50, 3.50, 5.00]
+# 실제 회사채(bondGbCode=7) 응답과 같은 등급 구성 (2026-10-12 확인)
+GRADES = ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-"]
+BASE = [0.29, 0.38, 0.41, 0.44, 0.53, 0.63, 0.86, 1.20, 1.59, 2.27]
 rng = np.random.default_rng(7)
 DATES = pd.bdate_range("2021-01-04", "2026-10-11")
 gov3 = 3.0 + np.cumsum(rng.normal(0, 0.008, len(DATES)))
@@ -66,15 +67,14 @@ class FakeSession:
         for g in GRADES:
             ET.SubElement(ET.SubElement(hdr, "BISSprdIdxDTO"), "bondGbCodeNm").text = g
         b = ET.SubElement(m, "BISSprdIdxBodyListDTO")
-        diff = ET.SubElement(b, "BISSprdIdxDTO")                    # 화면 맨 위 '차이' 행
-        ET.SubElement(diff, "standardDt").text = "차이"
-        ET.SubElement(diff, "val1").text = "0.46"
         for i in np.where((DATES >= f) & (DATES <= t))[0][::-1]:
             it = ET.SubElement(b, "BISSprdIdxDTO")
-            ET.SubElement(it, "standardDt").text = DATES[i].strftime("%Y%m%d")
+            ET.SubElement(it, "standardDt").text = DATES[i].strftime("%Y-%m-%d")   # 실제 응답 형식
             ET.SubElement(it, "val1").text = f"{gov[i]:.3f}"
             for j, g in enumerate(GRADES, start=2):
                 ET.SubElement(it, f"val{j}").text = f"{ser[g][i]:.2f}"
+            for j in range(len(GRADES) + 2, 21):                     # 실제 응답처럼 빈 val 칸
+                ET.SubElement(it, f"val{j}").text = ""
         return FakeResp(ET.tostring(m, encoding="unicode"))
 
 

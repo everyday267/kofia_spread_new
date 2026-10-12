@@ -1,7 +1,7 @@
 """회사채 신용스프레드 이력 누적 (data/spread_history.csv).
 
 long format
-    date   : 기준일 YYYYMMDD (str)
+    date   : 기준일 YYYYMMDD (str) — KOFIA 응답의 YYYY-MM-DD 를 정규화
     tenor  : 잔존만기 코드 = KOFIA remainDayCnt (str, 예: "3" = 3개월물)
     grade  : "국고채" 또는 정규화된 등급명 (정부보증, AAA, AA+, AA, AA-, A+, A, A- ...)
     value  : KOFIA 원값 — 국고채는 금리(%), 등급은 국고 대비 스프레드(%p)
@@ -35,7 +35,8 @@ def wide_to_long(df_wide: pd.DataFrame, tenor: str) -> pd.DataFrame:
     if df_wide is None or df_wide.empty:
         return pd.DataFrame(columns=HIST_COLS)
     d = df_wide.rename(columns={"기준일": "date", "국고채금리": GOV})
-    d = d[d["date"].astype(str).str.fullmatch(r"\d{8}")]          # '차이' 등 요약행 제외
+    d["date"] = d["date"].astype(str).str.replace("-", "", regex=False)  # KOFIA 응답: YYYY-MM-DD
+    d = d[d["date"].str.fullmatch(r"\d{8}")]                      # 날짜가 아닌 요약행 제외
     long = d.melt(id_vars="date", var_name="grade", value_name="value")
     long["grade"] = long["grade"].map(lambda g: g if g == GOV else normalize_grade(g))
     long["tenor"] = str(tenor)
