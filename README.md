@@ -170,6 +170,60 @@ Gmail SMTP 첨부 한도는 **25MB** 입니다. 조회 기간을 12개월 이상
 
 ---
 
+## 📈 ABS보증 수요 점검 확장 (v2.0)
+
+매일 수집분을 `data/spread_history.csv`에 누적하고, **SGI 보증(AAA 부여) 시 발행사 금리 절감폭**을 지표화해 메일 본문에 표·차트로 보여줍니다.
+
+### 지표 정의
+
+| 지표 | 계산 | 의미 |
+|---|---|---|
+| 국고대비(bp) | (등급금리 − 국고채금리) × 100 | 시장 전반 신용위험 분위기 |
+| **보증차익(bp)** | 등급 스프레드 − AAA 스프레드 | 우리 보증서의 경제적 가치 (수요 지표) |
+| 순차익(bp) | 보증차익 − `SGI_PREMIUM_BP` | SGI 보증물이 순수 AAA보다 더 받는 금리 차감 |
+| %ile | 최근 `PCTL_YEARS`년 분포 내 위치 | 높을수록 스프레드 넓음 = 보증 수요 국면 |
+
+- 관심 등급: AA- / A+ / A / A- (취급 범위), 기준선 AAA, 경색 신호 BBB+
+- 알림: A등급대 보증차익 3년 상위 20% 진입 · 1주 ±10bp 급변 · A-↔BBB+ 격차 1개월 +10bp 확대
+
+### 결과물
+
+- 메일 본문: 신호 목록 + 요약표 + 차트 2종(등급별 국고대비 스프레드 / 보증차익 + 보증료 밴드)
+- 엑셀 시트: `회사채_신용스프레드`(기존 원자료) · `요약_3M` · `국고대비bp_3M` · `보증차익bp_3M`
+- 이력: `data/spread_history.csv` (date, tenor, grade, value) — 워크플로우가 매 실행 후 커밋 (keepalive 효과도 겸함)
+
+### 추가 환경변수 (`kofia.yml`)
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `REMAIN_DAY_CNT` | `MONTHS`와 동일 | KOFIA `remainDayCnt` 값. 콤마로 여러 개 (예: `3,12,36`) |
+| `BACKFILL_MONTHS` | `0` | 수동 실행 입력값. 예: `60` → 5년치 12개월 단위 분할 조회 후 적재 |
+| `CHART_MONTHS` | `24` | 차트 표시 기간 |
+| `PCTL_YEARS` | `3` | 백분위 창 |
+| `SGI_PREMIUM_BP` | `0` | SGI 보증 ABS 실제 발행금리 − AAA 민평 (실적 사례로 보정) |
+| `FEE_BAND_BP` | (없음) | `"40,80"` 처럼 지정 시 보증차익 차트에 보증료 밴드 표시 |
+| `VALUE_MODE` | `auto` | KOFIA 값이 금리(`yield`)인지 스프레드(`spread`)인지. auto는 자동 판정 |
+| `DRY_RUN` | — | `1`이면 메일 대신 `output/mail_preview_*.eml` 저장 |
+
+### 최초 1회: 과거 이력 적재
+
+Actions → `KOFIA Corp Bond Spread` → Run workflow → `backfill_months`에 `60` 입력 (2022.10 레고랜드 구간 포함 권장).
+Settings → Actions → General → Workflow permissions가 **Read and write**여야 이력 커밋이 됩니다 (keepalive와 동일 조건).
+
+### ⚠️ 잔존만기(remainDayCnt) 검증 필요
+
+기존 코드는 `remainDayCnt`에 조회기간 개월 수(`MONTHS`)를 넣어 왔습니다. 화면의 **잔존만기 선택값**(3개월물·1년물 등)에 해당한다면, 기존 `MONTHS`를 바꾸는 순간 조회기간이 아니라 **만기가 바뀌는** 문제가 있었습니다. v2.0은 두 값을 분리했으며 기본값은 기존 요청과 동일합니다.
+
+검증 방법: KOFIA 화면에서 잔존만기만 바꿔 조회하며 개발자도구(Network) → `XMLSERVICES` 요청 본문의 `remainDayCnt` 값이 바뀌는지 확인. 바뀌면 `REMAIN_DAY_CNT: "3,12,36"`으로 확장하세요.
+
+### 오프라인 점검
+
+```bash
+python tests/offline_run.py   # 합성 XML로 수집→누적→지표→차트→메일(.eml)까지 실행, 임시폴더에 결과
+```
+
+---
+
 ## 📜 의존성
 
 ```
@@ -179,6 +233,7 @@ openpyxl
 python-dateutil
 urllib3
 exchange-calendars
+matplotlib
 ```
 
 Python 3.11+ 권장.
@@ -190,3 +245,4 @@ Python 3.11+ 권장.
 - v1.0 — 초기 버전 (Zoho → Gmail SMTP 전환, GitHub Actions 자동화)
 - v1.1 — 영업일 체크 버그 수정 (`pass` → `sys.exit(0)`), cron KST 08:30 적용
 - v1.2 - 영업일 체크를 workflow단에서 체크하여 skip여부 결정, cron KST 06:30 적용
+- v2.0 — 이력 누적(data/spread_history.csv), 보증차익·백분위·알림, HTML 메일 차트, 백필, remainDayCnt/조회기간 분리

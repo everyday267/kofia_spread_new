@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "23 21 * * 0-4"   # primary: KST 06:23
   workflow_dispatch:
+    inputs:
+      backfill_months:
+        description: "과거 이력 일괄 적재 개월 수 (0 = 평상시 실행)"
+        required: false
+        default: "0"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -34,6 +39,8 @@ jobs:
 
   run:
     needs: check-businessday
+    permissions:
+      contents: write          # data/spread_history.csv 커밋용
     if: needs.check-businessday.outputs.is_open == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -46,21 +53,42 @@ jobs:
           cache: "pip"
 
       - name: Install deps
-        run: pip install -r requirements.txt
+        run: |
+          sudo apt-get install -y -qq fonts-nanum > /dev/null   # 차트 한글 폰트
+          pip install -r requirements.txt
 
       - name: Run KOFIA collector & send mail
         env:
           MONTHS: "3"
           BOND_GB: "7"
+          REMAIN_DAY_CNT: "3"          # 검증 후 "3,12,36" 등으로 확장
+          BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months || '0' }}
+          CHART_MONTHS: "24"
+          PCTL_YEARS: "3"
+          SGI_PREMIUM_BP: "0"          # SGI 보증물이 순수 AAA 대비 더 받는 금리(bp)
+          FEE_BAND_BP: ""              # 예: "40,80" → 보증차익 차트에 보증료 밴드 표시
           SENDER_EMAIL: ${{ secrets.GMAIL_SENDER }}
           SENDER_PW:    ${{ secrets.GMAIL_APP_PW }}
           RECIPIENTS:   ${{ secrets.MAIL_RECIPIENTS }}
         run: python kofia_spread.py
+
+      - name: Commit spread history
+        if: success()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f data/spread_history.csv ] || { echo "이력 파일 없음(비영업일 스킵 등)"; exit 0; }
+          git add data/spread_history.csv
+          git diff --cached --quiet && { echo "이력 변경 없음"; exit 0; }
+          git commit -m "data: spread history $(date -u +%Y%m%d)"
+          git pull --rebase -q origin "${GITHUB_REF_NAME}" && git push -q origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload xlsx artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kofia-spread
-          path: output/*.xlsx
+          path: |
+            output/*.xlsx
+            output/*.png
           retention-days: 30
