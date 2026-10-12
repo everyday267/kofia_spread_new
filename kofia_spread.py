@@ -1,8 +1,6 @@
 import os, smtplib, ssl, sys
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from email.utils import make_msgid
-from html import escape
 from pathlib import Path
 from dateutil.relativedelta import relativedelta
 
@@ -10,29 +8,36 @@ import requests, pandas as pd, urllib3
 import xml.etree.ElementTree as ET
 import exchange_calendars as xcals
 
-import spread_analytics as sa
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+
 # ===== 환경변수 =====
-MONTHS       = int(os.getenv("MONTHS", "3"))            # 엑셀 원자료 시트 조회기간(개월)
-BOND_GB      = os.getenv("BOND_GB", "7")                # 7 = 회사채
-# KOFIA remainDayCnt 값 목록(콤마). 기본값 = MONTHS → 기존과 동일한 요청.
-# 화면의 '잔존만기' 선택값에 해당하는지 검증 후 "3,12,36" 처럼 확장 (README §잔존만기 검증)
-REMAIN_CNTS  = [x.strip() for x in os.getenv("REMAIN_DAY_CNT", str(MONTHS)).split(",") if x.strip()]
-BACKFILL_MONTHS = int(os.getenv("BACKFILL_MONTHS", "0") or 0)   # >0 이면 과거 이력 일괄 적재
-CHART_MONTHS = int(os.getenv("CHART_MONTHS", "24"))     # 차트 표시 기간
-PCTL_YEARS   = float(os.getenv("PCTL_YEARS", "3"))      # 백분위 산출 창(년)
-SGI_PREMIUM_BP = float(os.getenv("SGI_PREMIUM_BP", "0"))  # SGI 보증물이 순수 AAA 대비 더 받는 금리(bp)
-_fee = [x for x in os.getenv("FEE_BAND_BP", "").split(",") if x.strip()]
-FEE_BAND_BP  = (float(_fee[0]), float(_fee[1])) if len(_fee) == 2 else None   # 예: "40,80"
-VALUE_MODE   = os.getenv("VALUE_MODE", "auto")          # auto / yield / spread
-HISTORY_PATH = Path(os.getenv("HISTORY_PATH", "data/spread_history.csv"))
+MONTHS       = int(os.getenv("MONTHS", "3"))        # 조회기간(개월) — 화면의 '조회일' from~to
+BOND_GB      = os.getenv("BOND_GB", "7")
+# 잔존만기 — KOFIA remainDayCnt (화면 라벨은 '조회기간'이지만 실제는 잔존만기 선택칸 schRemainDayCnt)
+REMAIN_DAY_CNT = os.getenv("REMAIN_DAY_CNT", "3")   # 메일용: 3 = 국고 3개월물
+# 대시보드 이력용 잔존만기 목록 (콤마). 값 확인 후 확장: README §잔존만기 코드
+HISTORY_TENORS = [x.strip() for x in os.getenv("HISTORY_TENORS", REMAIN_DAY_CNT).split(",") if x.strip()]
+BACKFILL_MONTHS = int(os.getenv("BACKFILL_MONTHS", "0") or 0)   # >0: 이력 일괄 적재(수동 실행)
+SENDER_EMAIL = os.environ["SENDER_EMAIL"]
+SENDER_PW    = os.environ["SENDER_PW"]
+RECIPIENTS   = [x.strip() for x in os.environ["RECIPIENTS"].split(",") if x.strip()]
 SMTP_HOST    = "smtp.gmail.com"
 SMTP_PORT    = 587
 
 OUT_DIR = Path("output")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---- 기준일 ----
+KST  = timezone(timedelta(hours=9))
+xkrx = xcals.get_calendar("XKRX")
+today = pd.Timestamp(datetime.now(KST).date())
+if not xkrx.is_session(today):
+    print(f"{today.date()} 비영업일 - 종료")
+    sys.exit(0)   
+TO_DT = xkrx.previous_session(today).date().strftime("%Y%m%d")
+print(f"기준 영업일: {TO_DT}")
 
 # ---- KOFIA ----
 BASE = "https://www.kofiabond.or.kr"
@@ -46,8 +51,11 @@ HEADERS = {
     "Referer": REFERER, "Origin": BASE, "X-Requested-With": "XMLHttpRequest",
 }
 
+s = requests.Session()
+s.get(REFERER, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=15)
 
-def fetch(session, from_dt, to_dt, remain_cnt, bond_gb="7", wrk_gbn="TBOND_SPRD"):
+def fetch(to_dt, months, bond_gb="7", wrk_gbn="TBOND_SPRD", remain_cnt=REMAIN_DAY_CNT, from_dt=None):
+    from_dt = from_dt or (datetime.strptime(to_dt, "%Y%m%d") - relativedelta(months=months)).strftime("%Y%m%d")
     body = f"""<?xml version="1.0" encoding="utf-8"?>
 <message>
   <proframeHeader>
@@ -64,10 +72,9 @@ def fetch(session, from_dt, to_dt, remain_cnt, bond_gb="7", wrk_gbn="TBOND_SPRD"
     <uStandardDt>{to_dt}</uStandardDt>
   </BISSprdIdxDTO>
 </message>"""
-    r = session.post(URL, data=body.encode("utf-8"), headers=HEADERS, timeout=30)
+    r = s.post(URL, data=body.encode("utf-8"), headers=HEADERS, timeout=30)
     r.encoding = "utf-8"; r.raise_for_status()
     return ET.fromstring(r.text)
-
 
 def parse_ratings(root):
     names = []
@@ -77,7 +84,6 @@ def parse_ratings(root):
         nm = (item.findtext("bondGbCodeNm") or "").strip()
         if nm: names.append(nm)
     return names
-
 
 def parse_body(root, rating_names):
     rows = []
@@ -94,48 +100,54 @@ def parse_body(root, rating_names):
     df = pd.DataFrame(rows)
     return df.sort_values("기준일", ascending=False).reset_index(drop=True) if not df.empty else df
 
+root = fetch(TO_DT, MONTHS, BOND_GB)
+ratings = parse_ratings(root)
+df = parse_body(root, ratings)
+print(f"등급: {ratings} / {len(df)}행")
 
-def collect(session, to_dt, months, remain_cnt, chunk_months=12):
-    """months 기간을 chunk_months 단위로 나눠 조회 (장기 백필 시 응답 크기 제한 대비)."""
+if df.empty:
+    sys.exit("수집 0행 — 응답 비어있음 (해외 IP 차단 가능성)")
+
+out_path = OUT_DIR / f"kofia_corp_spread_{TO_DT}.xlsx"
+with pd.ExcelWriter(out_path, engine="openpyxl") as xw:
+    df.to_excel(xw, sheet_name="회사채_신용스프레드", index=False)
+print(f"저장: {out_path}")
+
+# ============ 이력 누적 + HTML 대시보드 (실패해도 메일은 발송) ============
+def collect_history(to_dt, tenor, months, chunk_months=12):
+    """months 기간을 chunk_months 단위로 나눠 조회."""
     end = datetime.strptime(to_dt, "%Y%m%d")
     start = end - relativedelta(months=months)
-    frames, ratings = [], []
-    cur_end = end
+    frames, names, cur_end = [], [], end
     while cur_end > start:
         cur_start = max(start, cur_end - relativedelta(months=chunk_months))
-        root = fetch(session, cur_start.strftime("%Y%m%d"), cur_end.strftime("%Y%m%d"),
-                     remain_cnt, BOND_GB)
-        ratings = parse_ratings(root) or ratings
-        part = parse_body(root, ratings)
-        if not part.empty:
-            frames.append(part)
+        r = fetch(cur_end.strftime("%Y%m%d"), 0, BOND_GB, remain_cnt=tenor,
+                  from_dt=cur_start.strftime("%Y%m%d"))
+        names = parse_ratings(r) or names
+        part = parse_body(r, names)
+        if not part.empty: frames.append(part)
         cur_end = cur_start - timedelta(days=1)
-    if not frames:
-        return pd.DataFrame(), ratings
-    df = pd.concat(frames).drop_duplicates("기준일", keep="first")
-    return df.sort_values("기준일", ascending=False).reset_index(drop=True), ratings
+    return pd.concat(frames).drop_duplicates("기준일") if frames else pd.DataFrame()
 
+try:
+    import spread_analytics as sa, spread_dashboard as sd
+    hist = sa.load_history(sa.HISTORY_PATH)
+    print(f"이력 로드: {len(hist)}행")
+    for tenor in HISTORY_TENORS:
+        if tenor == REMAIN_DAY_CNT and BACKFILL_MONTHS <= MONTHS:
+            part = df                                   # 메일용 수집분 재사용
+        else:
+            part = collect_history(TO_DT, tenor, max(MONTHS, BACKFILL_MONTHS))
+        print(f"[잔존만기 {tenor}] {len(part)}행")
+        hist = sa.upsert_history(hist, sa.wide_to_long(part, tenor))
+    sa.save_history(hist, sa.HISTORY_PATH)
+    print(f"이력 저장: {len(hist)}행 → {sa.HISTORY_PATH}")
+    print(f"대시보드: {sd.build_dashboard(hist, TO_DT)}")
+except Exception as e:
+    print(f"[경고] 이력/대시보드 갱신 실패 — 메일은 계속 발송: {type(e).__name__}: {e}")
 
-def tenor_label(code: str) -> str:
-    m = int(code)
-    return f"{m}M" if m < 12 or m % 12 else f"{m // 12}Y"
-
-
-# ============ 메일 ============
-def df_to_html(df: pd.DataFrame) -> str:
-    th = "".join(f"<th style='padding:4px 8px;border-bottom:1px solid #ccc;text-align:right'>"
-                 f"{escape(str(c))}</th>" for c in df.columns)
-    trs = []
-    for _, r in df.iterrows():
-        tds = "".join(
-            f"<td style='padding:4px 8px;text-align:right'>"
-            f"{'' if pd.isna(v) else escape(str(v))}</td>" for v in r.values)
-        trs.append(f"<tr>{tds}</tr>")
-    return (f"<table style='border-collapse:collapse;font-size:12px;font-family:sans-serif'>"
-            f"<tr>{th}</tr>{''.join(trs)}</table>")
-
-
-def send_via_gmail(host, port, sender, pw, msg):
+# ============ Gmail 발송 ============
+def send_via_gmail(host, port, sender, pw, recipients, msg):
     ctx = ssl.create_default_context()
     with smtplib.SMTP(host, port, timeout=30) as srv:
         srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
@@ -143,117 +155,26 @@ def send_via_gmail(host, port, sender, pw, msg):
         srv.send_message(msg)
     return f"{port}/STARTTLS"
 
-
-def main():
-    sender_email = os.environ["SENDER_EMAIL"]
-    sender_pw    = os.environ["SENDER_PW"]
-    recipients   = [x.strip() for x in os.environ["RECIPIENTS"].split(",") if x.strip()]
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ---- 기준일 ---- (kofia.yml Job 1 과 동일 로직 유지 — PRD §9-1)
-    kst  = timezone(timedelta(hours=9))
-    xkrx = xcals.get_calendar("XKRX")
-    today = pd.Timestamp(datetime.now(kst).date())
-    if not xkrx.is_session(today):
-        print(f"{today.date()} 비영업일 - 종료")
-        sys.exit(0)
-    to_dt = xkrx.previous_session(today).date().strftime("%Y%m%d")
-    print(f"기준 영업일: {to_dt}")
-
-    s = requests.Session()
-    s.get(REFERER, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=15)
-
-    # ---- 수집 + 이력 누적 ----
-    hist = sa.load_history(HISTORY_PATH)
-    print(f"이력 로드: {len(hist)}행 ({HISTORY_PATH})")
-    raw_by_tenor = {}
-    for cnt in REMAIN_CNTS:
-        months = max(MONTHS, BACKFILL_MONTHS)
-        df, ratings = collect(s, to_dt, months, cnt)
-        print(f"[remainDayCnt={cnt}] 등급: {ratings} / {len(df)}행")
-        if df.empty:
-            continue
-        raw_by_tenor[cnt] = df
-        hist = sa.upsert_history(hist, sa.wide_to_long(df, cnt))
-    if not raw_by_tenor:
-        sys.exit("수집 0행 — 응답 비어있음 (해외 IP 차단 가능성)")
-    sa.save_history(hist, HISTORY_PATH)
-    print(f"이력 저장: {len(hist)}행 → {HISTORY_PATH}")
-
-    # ---- 지표·차트 ----
-    from spread_charts import chart_credit_spread, chart_pickup
-    summaries, charts, alerts, sheets = {}, [], [], {}
-    chart_from = pd.Timestamp(to_dt) - pd.DateOffset(months=CHART_MONTHS)
-    for cnt in raw_by_tenor:
-        lbl = tenor_label(cnt)
-        yields, spread, pickup, mode = sa.build_panels(hist, cnt, VALUE_MODE)
-        print(f"[{lbl}] 값 해석 모드: {mode} / 이력 {len(spread)}일")
-        summaries[lbl] = sa.summary_table(spread, pickup, yields, PCTL_YEARS,
-                                          SGI_PREMIUM_BP, FEE_BAND_BP)
-        alerts += [f"[{lbl}] {a}" for a in sa.signals(spread, pickup, PCTL_YEARS)]
-        sp_c, pk_c = spread[spread.index >= chart_from], pickup[pickup.index >= chart_from]
-        charts.append(chart_credit_spread(sp_c, lbl, OUT_DIR / f"chart_spread_{lbl}_{to_dt}.png"))
-        charts.append(chart_pickup(pk_c, lbl, OUT_DIR / f"chart_pickup_{lbl}_{to_dt}.png",
-                                   FEE_BAND_BP, SGI_PREMIUM_BP))
-        sheets[f"국고대비bp_{lbl}"] = spread.sort_index(ascending=False)
-        sheets[f"보증차익bp_{lbl}"] = pickup.drop(columns="AAA", errors="ignore").sort_index(ascending=False)
-
-    # ---- 엑셀 ---- (파일명 패턴 유지 — PRD §9-7)
-    out_path = OUT_DIR / f"kofia_corp_spread_{to_dt}.xlsx"
-    with pd.ExcelWriter(out_path, engine="openpyxl") as xw:
-        first = next(iter(raw_by_tenor))
-        raw_by_tenor[first].head(400).to_excel(xw, sheet_name="회사채_신용스프레드", index=False)
-        for lbl, sm in summaries.items():
-            sm.to_excel(xw, sheet_name=f"요약_{lbl}", index=False)
-        for name, d in sheets.items():
-            d.index = d.index.strftime("%Y-%m-%d")
-            d.to_excel(xw, sheet_name=name[:31], index_label="기준일")
-    print(f"저장: {out_path}")
-
-    # ---- 메일 ----
-    msg = EmailMessage()
-    msg["Subject"] = f"[KOFIA] 회사채 신용스프레드 · ABS보증 차익 {to_dt}"
-    msg["From"]    = sender_email
-    msg["To"]      = ", ".join(recipients)
-    text = [f"기준 영업일: {to_dt}", *alerts] + [f"\n[{k}]\n{v.to_string(index=False)}"
-                                               for k, v in summaries.items()]
-    msg.set_content("\n".join(text))
-
-    cids = [make_msgid(domain="kofia.local") for _ in charts]
-    alert_html = ("<ul>" + "".join(f"<li>{escape(a)}</li>" for a in alerts) + "</ul>"
-                  if alerts else "<p style='color:#52514e'>특이 신호 없음</p>")
-    tables = "".join(f"<h3 style='font-family:sans-serif'>요약 ({escape(k)})</h3>{df_to_html(v)}"
-                     for k, v in summaries.items())
-    imgs = "".join(f"<p><img src='cid:{c[1:-1]}' style='max-width:100%'></p>" for c in cids)
-    note = ("<p style='font-size:11px;color:#52514e'>보증차익 = 무보증 등급 스프레드 − AAA 스프레드 "
-            f"(동일 만기). 순차익 = 보증차익 − SGI보증물 프리미엄({SGI_PREMIUM_BP:g}bp). "
-            f"%ile = 최근 {PCTL_YEARS:g}년 분포 내 위치(높을수록 넓음).</p>")
-    msg.add_alternative(f"<html><body><h2 style='font-family:sans-serif'>회사채 신용스프레드 · "
-                        f"ABS보증 차익 ({to_dt})</h2>{alert_html}{tables}{note}{imgs}</body></html>",
-                        subtype="html")
-    html_part = msg.get_payload()[-1]
-    for cid, path in zip(cids, charts):
-        html_part.add_related(path.read_bytes(), maintype="image", subtype="png", cid=cid)
-    with open(out_path, "rb") as f:
-        msg.add_attachment(
-            f.read(), maintype="application",
-            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename=out_path.name,
-        )
-
-    if os.getenv("DRY_RUN") == "1":
-        (OUT_DIR / f"mail_preview_{to_dt}.eml").write_bytes(bytes(msg))
-        print("DRY_RUN — 메일 미발송, .eml 저장"); return
-    try:
-        mode = send_via_gmail(SMTP_HOST, SMTP_PORT, sender_email,
-                              sender_pw.replace(" ", ""), msg)
-        print(f"메일 발송 완료 ({SMTP_HOST}, {mode}) → {recipients}")
-    except smtplib.SMTPAuthenticationError as e:
-        detail = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
-        print(f"인증 실패: Gmail 앱 비밀번호 16자리 확인 (서버 응답: {e.smtp_code} {detail})"); sys.exit(1)
-    except Exception as e:
-        print(f"메일 발송 실패: {type(e).__name__}: {e}"); sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+msg = EmailMessage()
+msg["Subject"] = f"[KOFIA] 회사채 신용스프레드 {TO_DT} ({MONTHS}개월)"
+msg["From"]    = SENDER_EMAIL
+msg["To"]      = ", ".join(RECIPIENTS)
+msg.set_content(
+    f"KOFIA 채권정보센터 회사채 신용스프레드 자동 수집 결과입니다.\n"
+    f"기준 영업일: {TO_DT}\n조회기간: {MONTHS}개월\n수집: {len(df)}행"
+)
+with open(out_path, "rb") as f:
+    msg.add_attachment(
+        f.read(), maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=out_path.name,
+    )
+try:
+    mode = send_via_gmail(SMTP_HOST, SMTP_PORT, SENDER_EMAIL,
+                          SENDER_PW.replace(" ", ""), RECIPIENTS, msg)
+    print(f"메일 발송 완료 ({SMTP_HOST}, {mode}) → {RECIPIENTS}")
+except smtplib.SMTPAuthenticationError as e:
+    detail = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+    print(f"인증 실패: Gmail 앱 비밀번호 16자리 확인 (서버 응답: {e.smtp_code} {detail})"); sys.exit(1)
+except Exception as e:
+    print(f"메일 발송 실패: {type(e).__name__}: {e}"); sys.exit(1)

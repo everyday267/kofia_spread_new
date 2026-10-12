@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       backfill_months:
-        description: "과거 이력 일괄 적재 개월 수 (0 = 평상시 실행)"
+        description: "과거 이력 일괄 적재 개월 수 (0 = 평상시 실행, 최초 1회 60 권장)"
         required: false
         default: "0"
 
@@ -40,7 +40,7 @@ jobs:
   run:
     needs: check-businessday
     permissions:
-      contents: write          # data/spread_history.csv 커밋용
+      contents: write          # data/ · docs/ 커밋용
     if: needs.check-businessday.outputs.is_open == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -53,34 +53,28 @@ jobs:
           cache: "pip"
 
       - name: Install deps
-        run: |
-          sudo apt-get install -y -qq fonts-nanum > /dev/null   # 차트 한글 폰트
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run KOFIA collector & send mail
         env:
           MONTHS: "3"
           BOND_GB: "7"
-          REMAIN_DAY_CNT: "3"          # 검증 후 "3,12,36" 등으로 확장
+          REMAIN_DAY_CNT: "3"                # 메일용 잔존만기 (3 = 국고 3개월물)
+          HISTORY_TENORS: "3"                # 대시보드 잔존만기 목록 — 코드 확인 후 "3,12,36" 등
           BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months || '0' }}
-          CHART_MONTHS: "24"
-          PCTL_YEARS: "3"
-          SGI_PREMIUM_BP: "0"          # SGI 보증물이 순수 AAA 대비 더 받는 금리(bp)
-          FEE_BAND_BP: ""              # 예: "40,80" → 보증차익 차트에 보증료 밴드 표시
           SENDER_EMAIL: ${{ secrets.GMAIL_SENDER }}
           SENDER_PW:    ${{ secrets.GMAIL_APP_PW }}
           RECIPIENTS:   ${{ secrets.MAIL_RECIPIENTS }}
         run: python kofia_spread.py
 
-      - name: Commit spread history
+      - name: Commit history & dashboard
         if: success()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          [ -f data/spread_history.csv ] || { echo "이력 파일 없음(비영업일 스킵 등)"; exit 0; }
-          git add data/spread_history.csv
-          git diff --cached --quiet && { echo "이력 변경 없음"; exit 0; }
-          git commit -m "data: spread history $(date -u +%Y%m%d)"
+          git add -A data docs 2>/dev/null || true
+          git diff --cached --quiet && { echo "이력/대시보드 변경 없음"; exit 0; }
+          git commit -q -m "data: spread history & dashboard $(TZ=Asia/Seoul date +%Y%m%d)"
           git pull --rebase -q origin "${GITHUB_REF_NAME}" && git push -q origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload xlsx artifact
@@ -88,7 +82,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kofia-spread
-          path: |
-            output/*.xlsx
-            output/*.png
+          path: output/*.xlsx
           retention-days: 30

@@ -4,4 +4,3 @@ openpyxl
 python-dateutil
 urllib3
 exchange-calendars
-matplotlib

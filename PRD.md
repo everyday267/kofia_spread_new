@@ -33,7 +33,7 @@ KOFIA 채권정보센터(BIS)에서 **회사채 신용등급별 스프레드**(�
 ### 1.4 비목표 (Non-Goals)
 
 - 실시간/장중 데이터 수집 (일 1회 배치만)
-- ~~데이터베이스 적재, 시계열 누적 저장~~ → v2.0에서 `data/spread_history.csv` 누적으로 전환 (README §ABS보증 수요 점검 확장)
+- ~~데이터베이스 적재, 시계열 누적 저장~~ → v2.0에서 `data/spread_history.csv` 누적 + `docs/index.html` 대시보드로 전환 (README §v2.0). 메일 본문·첨부는 v1.2 그대로
 - 실패 시 자동 재시도 (다음 영업일 스케줄까지 대기)
 - 회사채 외 다른 지표의 기본 수집 (환경변수로 확장은 가능)
 
@@ -140,7 +140,7 @@ TO_DT = xkrx.previous_session(today).date().strftime("%Y%m%d")
 ```xml
 <BISSprdIdxDTO>
   <wrkGbn>TBOND_SPRD</wrkGbn>          <!-- 국고채 대비 스프레드 -->
-  <remainDayCnt>{months}</remainDayCnt> <!-- ⚠️ 필드명과 달리 '개월 수'가 들어감. KOFIA 웹 UI가 이렇게 보냄 -->
+  <remainDayCnt>{remain_cnt}</remainDayCnt> <!-- 잔존만기 (화면 '조회기간' 드롭다운 = schRemainDayCnt). 3 = 3개월물 -->
   <bondGbCode>{bond_gb}</bondGbCode>    <!-- 7=회사채 -->
   <standardDt>{from_dt}</standardDt>    <!-- 조회 시작일 = to_dt - months -->
   <uStandardDt>{to_dt}</uStandardDt>    <!-- 조회 종료일 = 직전 영업일 -->
@@ -391,7 +391,7 @@ AI가 코드를 수정할 때 **깨뜨리면 안 되는 것들**:
 2. **비영업일은 exit 0 (성공)** 이어야 한다. exit 1로 바꾸면 휴일마다 실패 알림이 발송된다.
 3. **cron은 UTC**다. KST 기준 시각을 넣지 말 것. KST 평일 아침 = UTC `* * 0-4`(일~목).
 4. Secrets 이름(`GMAIL_SENDER`, `GMAIL_APP_PW`, `MAIL_RECIPIENTS`)을 바꾸면 레포 Settings의 Secret도 함께 바꿔야 한다 — 코드만 바꾸면 KeyError.
-5. (v2.0) `remainDayCnt`는 환경변수 `REMAIN_DAY_CNT`(기본=`MONTHS`)로, 조회기간(`standardDt`~`uStandardDt`)은 `MONTHS`/`BACKFILL_MONTHS`로 분리됨. 기본 요청은 v1.2와 동일. 원래 규칙: KOFIA 요청의 `remainDayCnt`에는 이름과 달리 **개월 수**가 들어간다. "버그처럼 보여도" KOFIA 웹 UI와 동일한 스펙이므로 임의로 일수로 바꾸지 말 것.
+5. `remainDayCnt`는 **잔존만기**다 (화면 라벨 '조회기간' = `schRemainDayCnt`, 3 = 3개월물). 조회 기간은 `standardDt`~`uStandardDt`. v2.0에서 `REMAIN_DAY_CNT`(기본 3)와 `MONTHS`로 분리됨 — 기본 요청은 v1.2와 동일. 값 체계(개월 수)는 KOFIA 웹 UI 전송값을 확인한 뒤에만 바꿀 것.
 6. 요청 헤더(특히 `Referer`, `Origin`, `X-Requested-With`, 브라우저형 UA)와 사전 GET 워밍업은 KOFIA 접근에 필요한 요소로 취급하고 제거하지 말 것.
 7. 출력 파일명 패턴 `kofia_corp_spread_{YYYYMMDD}.xlsx`과 Artifact 경로 `output/*.xlsx`는 연동되어 있다 — 한쪽 변경 시 `kofia.yml:65`도 수정.
 8. 스케줄 트리거는 **main 브랜치의 워크플로우 파일**만 읽는다. 스케줄/로직 변경은 main 머지까지 완료해야 반영된다.
