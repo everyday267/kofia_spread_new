@@ -51,6 +51,14 @@ h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
 .card h2 { font-size: 15px; margin: 0 0 2px; }
 .card-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .seg-sm button { padding: 4px 10px; font-size: 12px; }
+.custom-range { margin-top: -6px; }
+.custom-range input[type=date] { width: auto; text-align: left; }
+.hint { font-size: 12px; color: var(--ink-3); }
+.lock { font-size: 11px; font-weight: 500; color: var(--ink-3); margin-left: 8px; }
+.filebtn { position: relative; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; background: var(--surface-1); }
+.filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.filebtn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.secure { border-style: dashed; }
 .card .note { font-size: 12px; color: var(--ink-3); margin: 0 0 8px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tile { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
@@ -103,9 +111,34 @@ footer { color: var(--ink-3); font-size: 12px; margin-top: 8px; }
   <div class="controls">
     <div><span class="ctl-label">잔존만기</span><span class="seg" id="tenorSeg"></span></div>
     <div><span class="ctl-label">표시기간</span><span class="seg" id="rangeSeg"></span></div>
-    <div class="inputs">
-      <label>보증료 밴드 <input id="feeLo" type="number" step="1" inputmode="decimal" placeholder="하단"> ~ <input id="feeHi" type="number" step="1" inputmode="decimal" placeholder="상단"> bp</label>
-      <label>SGI보증물 프리미엄 <input id="prem" type="number" step="1" inputmode="decimal" value="0"> bp</label>
+  </div>
+  <div class="controls custom-range" id="customRange" hidden>
+    <span class="ctl-label">직접입력</span>
+    <label class="inputs">시작일 <input id="rangeFrom" type="date"></label>
+    <span class="ctl-label">~</span>
+    <label class="inputs">종료일 <input id="rangeTo" type="date"></label>
+    <span class="hint" id="rangeHint"></span>
+  </div>
+
+  <div class="card secure">
+    <div class="card-head">
+      <h2>보증료 · SGI보증물 프리미엄 <span class="lock">이 브라우저 안에서만 계산 · 서버/저장소로 전송되지 않음</span></h2>
+    </div>
+    <div class="controls" style="margin:6px 0 0">
+      <div class="inputs">
+        <label>보증료 밴드(공통) <input id="feeLo" type="number" step="1" inputmode="decimal" placeholder="하단"> ~ <input id="feeHi" type="number" step="1" inputmode="decimal" placeholder="상단"> bp</label>
+        <label>SGI보증물 프리미엄 <input id="prem" type="number" step="1" inputmode="decimal" placeholder="0"> bp</label>
+      </div>
+      <div class="inputs">
+        <label class="filebtn">설정 파일 열기 <input id="cfgFile" type="file" accept=".json,application/json"></label>
+        <button class="theme" id="cfgTemplate" type="button">양식 내려받기</button>
+        <button class="theme" id="cfgClear" type="button">입력·설정 지우기</button>
+        <label><input id="remember" type="checkbox"> 이 브라우저에 기억</label>
+      </div>
+    </div>
+    <p class="note" id="cfgStatus" style="margin:8px 0 0"></p>
+    <div id="caseWrap" hidden>
+      <div class="tbl-wrap" style="margin-top:8px"><table id="cases"></table></div>
     </div>
   </div>
 
@@ -117,7 +150,10 @@ footer { color: var(--ink-3); font-size: 12px; margin-top: 8px; }
   </div>
 
   <div class="card">
-    <h2>ABS보증 차익 — 무보증 등급 스프레드 − AAA 스프레드</h2>
+    <div class="card-head">
+      <h2>ABS보증 차익 — 무보증 등급 스프레드 − AAA 스프레드</h2>
+      <span id="bandGradeWrap" hidden><span class="ctl-label">음영 밴드 기준</span><span class="seg seg-sm" id="bandGradeSeg"></span></span>
+    </div>
     <p class="note" id="pickupNote"></p>
     <div class="legend" id="lg2"></div>
     <div class="chart" id="c2"></div>
@@ -163,7 +199,7 @@ const FOCUS = ["AA-", "A+", "A", "A-"];
 const TSY = "국고채";
 const colorOf = g => g === TSY ? "--c-tsy" : (GRADES.find(x => x.g === g) || { v: "--ink-3" }).v;
 const MODES = [{ k: "spread", label: "스프레드(bp)" }, { k: "yield", label: "수익률(%)" }];
-const RANGES = [["6M", 6], ["1Y", 12], ["3Y", 36], ["5Y", 60], ["전체", 0]];
+const RANGES = [["6M", 6], ["1Y", 12], ["3Y", 36], ["5Y", 60], ["전체", 0], ["직접입력", -1]];
 const DAY = 864e5;
 
 const store = {
@@ -174,7 +210,16 @@ const state = {
   tenor: store.get("tenor", 0), range: store.get("range", "1Y"),
   hidden1: new Set(store.get("hidden1", ["정부보증"])), hidden2: new Set(store.get("hidden2", [])),
   mode: store.get("mode", "spread"),
+  from: store.get("from", null), to: store.get("to", null), bandGrade: store.get("bandGrade", "A-"),
 };
+// 기밀 입력(보증료·프리미엄·설정 파일)은 '이 브라우저에 기억'을 켠 경우에만 localStorage에 남김
+const secret = {
+  on() { return store.get("remember", false) === true; },
+  get(k, d) { return this.on() ? store.get("secret:" + k, d) : d; },
+  set(k, v) { if (this.on()) store.set("secret:" + k, v); },
+  wipe() { try { Object.keys(localStorage).filter(k => k.startsWith("kofia:secret:")).forEach(k => localStorage.removeItem(k)); } catch (e) {} },
+};
+let CFG = null;   // { name, feeBandsBp: {grade:[lo,hi]}, premiumBp, cases: [...] }
 
 const el = (tag, attrs = {}, kids = []) => {
   const n = document.createElement(tag);
@@ -224,13 +269,40 @@ function pctile(dates, arr, years = 3) {
   for (let i = 0; i <= li; i++) if (arr[i] != null && dates[i] >= from) { n++; if (arr[i] <= arr[li]) le++; }
   return [n ? Math.round(le / n * 100) : null, n];
 }
+// 사례 1건의 SGI보증물 프리미엄(bp) = 실제 발행금리 − 같은 날(직전 영업일) 같은 만기 AAA 민평 수익률
+function casePremium(c) {
+  const t = DATA.tenors.find(x => String(x.code) === String(c.tenorMonths));
+  if (!t) return { ...c, err: `잔존만기 ${c.tenorMonths}개월 이력 없음` };
+  const d = String(c.date || "").replace(/-/g, "");
+  let i = -1; for (let k = t.dates.length - 1; k >= 0; k--) if (t.dates[k] <= d) { i = k; break; }
+  if (i < 0) return { ...c, err: "이력 시작 이전 날짜" };
+  const aaa = t.s["AAA"] && t.s["AAA"][i], gov = t.gov[i];
+  if (aaa == null || gov == null) return { ...c, err: "AAA 값 없음" };
+  const aaaY = gov + aaa / 100;
+  return { ...c, refDate: t.dates[i], aaaY, prem: Math.round((Number(c.issueRatePct) - aaaY) * 1000) / 10 };
+}
+const median = a => { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 function inputs() {
   const num = id => { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : null; };
-  return { lo: num("feeLo"), hi: num("feeHi"), prem: num("prem") || 0 };
+  const f = { lo: num("feeLo"), hi: num("feeHi"), prem: num("prem") || 0, premSrc: "직접 입력", bands: {}, cases: [] };
+  if (CFG) {
+    f.bands = CFG.feeBandsBp || {};
+    f.cases = (CFG.cases || []).map(casePremium);
+    const ok = f.cases.filter(c => c.prem != null && Number.isFinite(c.prem)).map(c => c.prem);
+    if (Number.isFinite(CFG.premiumBp)) { f.prem = CFG.premiumBp; f.premSrc = "설정 파일 지정값"; }
+    else if (ok.length) { f.prem = Math.round(median(ok) * 10) / 10; f.premSrc = `사례 ${ok.length}건 중앙값`; }
+  }
+  return f;
 }
-function feeStatus(net, f) {
-  if (net == null || f.lo == null || f.hi == null) return null;
-  return net >= f.hi ? "보증료 상단 초과" : net >= f.lo ? "보증료 밴드 내" : "보증료 하단 미만";
+function bandOf(f, g) {
+  const b = f.bands && f.bands[g];
+  if (Array.isArray(b) && b.length === 2 && b.every(Number.isFinite)) return b;
+  return f.lo != null && f.hi != null ? [f.lo, f.hi] : null;
+}
+function feeStatus(net, f, g) {
+  const b = bandOf(f, g);
+  if (net == null || !b) return null;
+  return net >= b[1] ? "보증료 상단 초과" : net >= b[0] ? "보증료 밴드 내" : "보증료 하단 미만";
 }
 
 // ---------- 차트 ----------
@@ -344,23 +416,38 @@ function render() {
   document.getElementById("asof").textContent =
     `기준일 ${dLabel(parseD(DATA.asOf))} · 잔존만기 ${t.label} · 이력 ${t.dates.length.toLocaleString()}영업일 (${dLabel(dates[0])}~) · 갱신 ${DATA.built}`;
 
-  // 표시기간 슬라이스
+  // 표시기간 슬라이스 [s0, s1]
   const months = (RANGES.find(r => r[0] === state.range) || RANGES[1])[1];
-  let s0 = 0;
-  if (months) { const from = new Date(dates[dates.length - 1]); from.setMonth(from.getMonth() - months); s0 = dates.findIndex(d => d >= from); if (s0 < 0) s0 = 0; }
-  const sd = dates.slice(s0);
+  let s0 = 0, s1 = dates.length - 1;
+  const custom = months === -1;
+  document.getElementById("customRange").hidden = !custom;
+  if (custom) {
+    const fIn = document.getElementById("rangeFrom"), tIn = document.getElementById("rangeTo");
+    fIn.min = tIn.min = dLabel(dates[0]); fIn.max = tIn.max = dLabel(dates[dates.length - 1]);
+    if (!state.from || !state.to) { const d = new Date(dates[s1]); d.setFullYear(d.getFullYear() - 1); state.from = dLabel(d); state.to = dLabel(dates[s1]); }
+    fIn.value = state.from; tIn.value = state.to;
+    let a = state.from, b = state.to; if (a > b) [a, b] = [b, a];
+    const i0 = dates.findIndex(d => dLabel(d) >= a);
+    let i1 = -1; for (let k = dates.length - 1; k >= 0; k--) if (dLabel(dates[k]) <= b) { i1 = k; break; }
+    const hint = document.getElementById("rangeHint");
+    if (i0 < 0 || i1 < 0 || i1 - i0 < 1) { hint.textContent = "해당 기간에 데이터가 2영업일 미만 — 전체 기간을 표시합니다."; }
+    else { s0 = i0; s1 = i1; hint.textContent = `${dLabel(dates[s0])} ~ ${dLabel(dates[s1])} · ${s1 - s0 + 1}영업일`; }
+  } else if (months) {
+    const from = new Date(dates[dates.length - 1]); from.setMonth(from.getMonth() - months); s0 = dates.findIndex(d => d >= from); if (s0 < 0) s0 = 0;
+  }
+  const sd = dates.slice(s0, s1 + 1), cut = arr => arr.slice(s0, s1 + 1);
 
   // 타일
   const tiles = document.getElementById("tiles"); tiles.textContent = "";
   for (const g of FOCUS) {
     const arr = t._pickup[g]; if (!arr) continue;
     const li = lastIdx(arr), v = li < 0 ? null : arr[li], c1m = change(dates, arr, 30), [p] = pctile(dates, arr);
-    const net = v == null ? null : v - f.prem, st = feeStatus(net, f);
+    const net = v == null ? null : v - f.prem, st = feeStatus(net, f, g), b = bandOf(f, g);
     tiles.append(el("div", { class: "tile" }, [
       el("div", { class: "k" }, [el("i", { style: `background:var(${colorOf(g)})` }), `${g} 보증차익`]),
       el("div", { class: "v" }, [fmt(v), el("small", { text: "bp" })]),
       el("div", { class: "m" }, [el("span", { class: c1m > 0 ? "up" : c1m < 0 ? "down" : "", text: `1개월 ${fmtChg(c1m)}bp` }), ` · 3년 ${p == null ? "–" : p}%ile`]),
-      st ? el("span", { class: "tag", text: `순차익 ${fmt(net)}bp · ${st}` }) : null,
+      st ? el("span", { class: "tag", text: `순차익 ${fmt(net)}bp · ${st} (${b[0]}~${b[1]})` }) : null,
     ]));
   }
 
@@ -369,7 +456,7 @@ function render() {
   for (const g of FOCUS) {
     const arr = t._pickup[g]; if (!arr) continue;
     const [p, n] = pctile(dates, arr), w = change(dates, arr, 7), v = arr[lastIdx(arr)];
-    if (n >= 60 && p >= 80) sig.push(`${g} 보증차익 ${fmt(v)}bp — 3년 상위 ${100 - p}% (보증 수요 확대 국면)`);
+    if (n >= 60 && p >= 80) sig.push(`${g} 보증차익 ${fmt(v)}bp — 3년 상위 ${Math.max(1, 100 - p)}% (보증 수요 확대 국면)`);
     if (w != null && Math.abs(w) >= 10) sig.push(`${g} 보증차익 1주 ${fmtChg(w, 0)}bp 급변`);
   }
   if (t.s["A-"] && t.s["BBB+"]) {
@@ -382,13 +469,19 @@ function render() {
 
   // 차트
   const g2 = FOCUS.filter(g => t._pickup[g]);
-  const band = f.lo != null && f.hi != null ? Object.assign([f.lo + f.prem, f.hi + f.prem], { label: `보증료 ${f.lo}~${f.hi}bp` + (f.prem ? ` (+프리미엄 ${f.prem})` : "") }) : null;
+  const perGrade = Object.keys(f.bands || {}).some(g => FOCUS.includes(g));
+  document.getElementById("bandGradeWrap").hidden = !perGrade;
+  if (perGrade) seg(document.getElementById("bandGradeSeg"), g2.map(g => ({ label: g, g })), it => it.g === state.bandGrade,
+    it => { state.bandGrade = it.g; store.set("bandGrade", it.g); }, true);
+  const bb = bandOf(f, perGrade ? state.bandGrade : null) || (perGrade ? null : bandOf(f, null));
+  const band = bb ? Object.assign([bb[0] + f.prem, bb[1] + f.prem], {
+    label: (perGrade ? `${state.bandGrade} ` : "") + `보증료 ${bb[0]}~${bb[1]}bp` + (f.prem ? ` (+프리미엄 ${fmt(f.prem, 1)})` : "") }) : null;
   document.getElementById("pickupNote").textContent =
     "SGI 보증으로 AAA를 받을 때 발행사가 아끼는 금리(bp). 음영 = 보증료 밴드(+프리미엄) — 선이 음영 위에 있을수록 보증 수요 여력이 큼.";
   legend(document.getElementById("lg2"), g2, state.hidden2, "hidden2", band && band.label);
   lineChart(document.getElementById("c2"), {
     dates: sd, band, zero: true,
-    series: g2.map(g => ({ label: g, color: colorOf(g), values: t._pickup[g].slice(s0), hidden: state.hidden2.has(g) })),
+    series: g2.map(g => ({ label: g, color: colorOf(g), values: cut(t._pickup[g]), hidden: state.hidden2.has(g) })),
   });
   const g1 = GRADES.map(x => x.g).filter(g => t.s[g]);
   const isY = state.mode === "yield";
@@ -400,7 +493,7 @@ function render() {
   legend(document.getElementById("lg1"), c1Grades, state.hidden1, "hidden1");
   lineChart(document.getElementById("c1"), {
     dates: sd, unit: isY ? "%" : "bp", dp: isY ? 2 : 0,
-    series: c1Grades.map(g => ({ label: g, color: colorOf(g), values: (isY ? t._yield[g] : t.s[g]).slice(s0), hidden: state.hidden1.has(g) })),
+    series: c1Grades.map(g => ({ label: g, color: colorOf(g), values: cut(isY ? t._yield[g] : t.s[g]), hidden: state.hidden1.has(g) })),
   });
 
   // 요약표
@@ -412,8 +505,24 @@ function render() {
     const pv = p[lastIdx(p)], net = isBase || pv == null ? null : pv - f.prem;
     const cells = [g, fmt(t._yield[g][li], 2), fmt(a[li], 1), fmtChg(change(dates, a, 7)), fmtChg(change(dates, a, 30)), pctile(dates, a)[0] ?? "–",
       isBase ? "–" : fmt(pv, 1), isBase ? "–" : fmtChg(change(dates, p, 30)), isBase ? "–" : (pctile(dates, p)[0] ?? "–"),
-      isBase ? "–" : fmt(net, 1), isBase ? "–" : (feeStatus(net, f) || "–")];
+      isBase ? "–" : fmt(net, 1), isBase ? "–" : (feeStatus(net, f, g) || "–")];
     tb.append(el("tr", { class: FOCUS.includes(g) ? "focus" : "" }, cells.map(c => el("td", { text: String(c) }))));
+  }
+
+  // 기밀 설정 상태 · 사례표
+  const premIn = document.getElementById("prem");
+  premIn.disabled = !!CFG && f.premSrc !== "직접 입력";
+  if (premIn.disabled) premIn.value = f.prem;
+  const nb = Object.keys(f.bands).length, nc = f.cases.length;
+  document.getElementById("cfgStatus").textContent = CFG
+    ? `설정 파일 '${CFG.name}' 적용 — 등급별 보증료 밴드 ${nb}개, 보정 사례 ${nc}건, 프리미엄 ${fmt(f.prem, 1)}bp (${f.premSrc}). ${secret.on() ? "이 브라우저에 기억 중." : "탭을 닫으면 사라짐."}`
+    : `설정 파일 없음 — 공통 밴드·프리미엄 직접 입력 사용. ${secret.on() ? "입력값을 이 브라우저에 기억 중." : "입력값은 탭을 닫으면 사라짐."}`;
+  const cw = document.getElementById("caseWrap"), ct = document.getElementById("cases");
+  cw.hidden = !nc; ct.textContent = "";
+  if (nc) {
+    ct.append(el("tr", {}, ["발행일", "잔존만기", "발행금리(%)", "AAA 민평(%)", "적용 기준일", "프리미엄(bp)", "메모"].map(h => el("th", { text: h }))));
+    for (const c of f.cases) ct.append(el("tr", {}, [c.date, `${c.tenorMonths}개월`, fmt(Number(c.issueRatePct), 3),
+      c.err ? "–" : fmt(c.aaaY, 3), c.err ? c.err : dLabel(parseD(c.refDate)), c.err ? "–" : fmt(c.prem, 1), c.memo || ""].map(v => el("td", { text: String(v) }))));
   }
 
   // 원자료 표
@@ -426,11 +535,11 @@ function render() {
 }
 
 // ---------- 컨트롤 ----------
-function seg(host, items, isOn, onPick) {
+function seg(host, items, isOn, onPick, inRender) {
   host.textContent = "";
   items.forEach((it, i) => {
     const b = el("button", { type: "button", "aria-pressed": String(isOn(it, i)), text: it.label ?? it[0] });
-    b.addEventListener("click", () => { onPick(it, i); seg(host, items, isOn, onPick); render(); });
+    b.addEventListener("click", () => { onPick(it, i); if (!inRender) seg(host, items, isOn, onPick); render(); });
     host.append(b);
   });
 }
@@ -439,11 +548,65 @@ function init() {
   seg(document.getElementById("tenorSeg"), DATA.tenors, (t, i) => i === state.tenor, (t, i) => { state.tenor = i; store.set("tenor", i); });
   seg(document.getElementById("modeSeg"), MODES, m => m.k === state.mode, m => { state.mode = m.k; store.set("mode", m.k); });
   seg(document.getElementById("rangeSeg"), RANGES, r => r[0] === state.range, r => { state.range = r[0]; store.set("range", r[0]); });
+  // 예전 버전이 평문으로 남긴 값 정리
+  for (const id of ["feeLo", "feeHi", "prem"]) { try { localStorage.removeItem("kofia:" + id); } catch (e) {} }
+  const rem = document.getElementById("remember");
+  rem.checked = secret.on();
+  rem.addEventListener("change", () => {
+    store.set("remember", rem.checked);
+    if (rem.checked) { for (const id of ["feeLo", "feeHi", "prem"]) secret.set(id, document.getElementById(id).value); if (CFG) secret.set("cfg", CFG); }
+    else secret.wipe();
+    render();
+  });
   for (const id of ["feeLo", "feeHi", "prem"]) {
-    const n = document.getElementById(id), saved = store.get(id, null);
+    const n = document.getElementById(id), saved = secret.get(id, null);
     if (saved !== null) n.value = saved;
-    n.addEventListener("input", () => { store.set(id, n.value); render(); });
+    n.addEventListener("input", () => { secret.set(id, n.value); render(); });
   }
+  CFG = secret.get("cfg", null);
+  document.getElementById("cfgFile").addEventListener("change", async e => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    try {
+      const j = JSON.parse(await file.text());
+      const bands = {};
+      for (const [g, v] of Object.entries(j.feeBandsBp || {})) if (Array.isArray(v) && v.length === 2 && v.every(x => Number.isFinite(+x))) bands[g] = [+v[0], +v[1]];
+      const cases = (Array.isArray(j.cases) ? j.cases : []).filter(c => c && c.date && c.tenorMonths != null && Number.isFinite(+c.issueRatePct))
+        .map(c => ({ date: String(c.date), tenorMonths: +c.tenorMonths, issueRatePct: +c.issueRatePct, memo: c.memo ? String(c.memo) : "" }));
+      CFG = { name: file.name, feeBandsBp: bands, premiumBp: Number.isFinite(+j.premiumBp) && j.premiumBp !== null && j.premiumBp !== "" ? +j.premiumBp : null, cases };
+      secret.set("cfg", CFG);
+    } catch (err) {
+      document.getElementById("cfgStatus").textContent = `설정 파일을 읽지 못함: ${err.message}`; return;
+    } finally { e.target.value = ""; }
+    render();
+  });
+  document.getElementById("cfgClear").addEventListener("click", () => {
+    CFG = null; secret.wipe();
+    for (const id of ["feeLo", "feeHi", "prem"]) document.getElementById(id).value = "";
+    document.getElementById("prem").disabled = false;
+    render();
+  });
+  document.getElementById("cfgTemplate").addEventListener("click", () => {
+    const tpl = {
+      "_설명": "이 파일은 내 PC에만 보관. 대시보드의 [설정 파일 열기]로 불러오면 브라우저 안에서만 계산되고 어디에도 전송되지 않음. 숫자는 예시이므로 실제 값으로 바꿀 것.",
+      "feeBandsBp": { "AA-": [10, 20], "A+": [20, 35], "A": [30, 50], "A-": [45, 70] },
+      "premiumBp": null,
+      "_premiumBp": "null 이면 cases 의 프리미엄 중앙값을 사용. 숫자를 넣으면 그 값을 우선 사용.",
+      "cases": [
+        { "date": "2026-03-15", "tenorMonths": 3, "issueRatePct": 3.55, "memo": "예시 — SGI 보증 ABSTB" },
+        { "date": "2026-06-20", "tenorMonths": 12, "issueRatePct": 3.95, "memo": "예시 — SGI 보증 ABS" }
+      ],
+      "_cases": "date=발행(가격결정)일, tenorMonths=잔존만기(3/6/9/12/18/24/30/36/60 중 대시보드에 있는 값), issueRatePct=실제 발행금리(%)"
+    };
+    const a = el("a", { href: URL.createObjectURL(new Blob([JSON.stringify(tpl, null, 2)], { type: "application/json" })), download: `sgi_guarantee_settings_template_${dLabel(new Date()).replace(/-/g, "")}.json` });
+    document.body.append(a); a.click(); a.remove();
+  });
+  const onRange = () => {
+    state.from = document.getElementById("rangeFrom").value || state.from;
+    state.to = document.getElementById("rangeTo").value || state.to;
+    store.set("from", state.from); store.set("to", state.to); render();
+  };
+  document.getElementById("rangeFrom").addEventListener("change", onRange);
+  document.getElementById("rangeTo").addEventListener("change", onRange);
   document.getElementById("theme").addEventListener("click", () => {
     const r = document.documentElement, dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
     r.dataset.theme = dark ? "light" : "dark"; store.set("theme", r.dataset.theme); render();

@@ -1,2 +1,4 @@
 __pycache__/
 output/
+sgi_guarantee_settings*.json
+*settings*.local.json
