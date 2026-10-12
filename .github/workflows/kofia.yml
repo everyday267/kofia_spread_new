@@ -2,7 +2,7 @@ name: KOFIA Corp Bond Spread
 
 on:
   schedule:
-    - cron: "23 21 * * 0-4"   # primary: KST 06:23
+    - cron: "23 19 * * 0-4"   # primary: KST 06:23
   workflow_dispatch:
     inputs:
       backfill_months:
