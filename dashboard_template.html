@@ -11,7 +11,7 @@
   --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #7a7974; --band: rgba(120,116,105,.14);
   --accent: #2a78d6; --up: #b4372f; --down: #1f7a4d;
   --c-gov: #008300; --c-AAA: #2a78d6; --c-AAm: #1baf7a; --c-Ap: #eda100;
-  --c-A: #e87ba4; --c-Am: #6250d6; --c-BBBp: #eb6834;
+  --c-A: #e87ba4; --c-Am: #6250d6; --c-BBBp: #eb6834; --c-tsy: #7a7974;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -20,7 +20,7 @@
     --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8f8e86; --band: rgba(200,196,185,.12);
     --accent: #3987e5; --up: #e87f76; --down: #5cc08f;
     --c-gov: #008300; --c-AAA: #3987e5; --c-AAm: #199e70; --c-Ap: #c98500;
-    --c-A: #d55181; --c-Am: #9085e9; --c-BBBp: #d95926;
+    --c-A: #d55181; --c-Am: #9085e9; --c-BBBp: #d95926; --c-tsy: #8f8e86;
   }
 }
 :root[data-theme="dark"] {
@@ -29,7 +29,7 @@
   --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8f8e86; --band: rgba(200,196,185,.12);
   --accent: #3987e5; --up: #e87f76; --down: #5cc08f;
   --c-gov: #008300; --c-AAA: #3987e5; --c-AAm: #199e70; --c-Ap: #c98500;
-  --c-A: #d55181; --c-Am: #9085e9; --c-BBBp: #d95926;
+  --c-A: #d55181; --c-Am: #9085e9; --c-BBBp: #d95926; --c-tsy: #8f8e86;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--surface-0); color: var(--ink);
@@ -49,6 +49,8 @@ h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
 .inputs input { width: 64px; padding: 5px 6px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface-1); color: var(--ink); font: inherit; text-align: right; }
 .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
 .card h2 { font-size: 15px; margin: 0 0 2px; }
+.card-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.seg-sm button { padding: 4px 10px; font-size: 12px; }
 .card .note { font-size: 12px; color: var(--ink-3); margin: 0 0 8px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tile { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
@@ -122,7 +124,10 @@ footer { color: var(--ink-3); font-size: 12px; margin-top: 8px; }
   </div>
 
   <div class="card">
-    <h2>국고채 대비 신용스프레드</h2>
+    <div class="card-head">
+      <h2 id="c1Title">국고채 대비 신용스프레드</h2>
+      <span class="seg seg-sm" id="modeSeg"></span>
+    </div>
     <p class="note" id="spreadNote"></p>
     <div class="legend" id="lg1"></div>
     <div class="chart" id="c1"></div>
@@ -136,7 +141,7 @@ footer { color: var(--ink-3); font-size: 12px; margin-top: 8px; }
 
   <div class="card">
     <details>
-      <summary>최근 일별 데이터 (표)</summary>
+      <summary>최근 일별 데이터 (표 · 위 차트의 스프레드/수익률 선택을 따름)</summary>
       <div class="tbl-wrap" style="margin-top:8px"><table id="raw"></table></div>
     </details>
   </div>
@@ -155,7 +160,9 @@ const GRADES = [
   { g: "A+", v: "--c-Ap" }, { g: "A", v: "--c-A" }, { g: "A-", v: "--c-Am" }, { g: "BBB+", v: "--c-BBBp" },
 ];
 const FOCUS = ["AA-", "A+", "A", "A-"];
-const colorOf = g => (GRADES.find(x => x.g === g) || { v: "--ink-3" }).v;
+const TSY = "국고채";
+const colorOf = g => g === TSY ? "--c-tsy" : (GRADES.find(x => x.g === g) || { v: "--ink-3" }).v;
+const MODES = [{ k: "spread", label: "스프레드(bp)" }, { k: "yield", label: "수익률(%)" }];
 const RANGES = [["6M", 6], ["1Y", 12], ["3Y", 36], ["5Y", 60], ["전체", 0]];
 const DAY = 864e5;
 
@@ -166,6 +173,7 @@ const store = {
 const state = {
   tenor: store.get("tenor", 0), range: store.get("range", "1Y"),
   hidden1: new Set(store.get("hidden1", ["정부보증"])), hidden2: new Set(store.get("hidden2", [])),
+  mode: store.get("mode", "spread"),
 };
 
 const el = (tag, attrs = {}, kids = []) => {
@@ -190,6 +198,10 @@ const dLabel = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "
 function tenorData() {
   const t = DATA.tenors[Math.min(state.tenor, DATA.tenors.length - 1)];
   if (!t._dates) t._dates = t.dates.map(parseD);
+  if (!t._yield) {
+    t._yield = { [TSY]: t.gov.slice() };
+    for (const g of Object.keys(t.s)) t._yield[g] = t.s[g].map((v, i) => v == null || t.gov[i] == null ? null : Math.round((t.gov[i] + v / 100) * 1000) / 1000);
+  }
   if (!t._pickup) {
     t._pickup = {};
     const aaa = t.s["AAA"] || [];
@@ -228,7 +240,7 @@ function niceTicks(lo, hi, n = 5) {
   const ticks = []; for (let v = Math.floor(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(+v.toFixed(6));
   return ticks;
 }
-function lineChart(host, { dates, series, band, zero }) {
+function lineChart(host, { dates, series, band, zero, unit = "bp", dp = 0 }) {
   host.textContent = "";
   const W = Math.max(320, host.clientWidth), H = W < 560 ? 260 : 340;
   const m = { t: 12, r: W < 560 ? 64 : 84, b: 28, l: 44 };
@@ -248,7 +260,7 @@ function lineChart(host, { dates, series, band, zero }) {
   if (band) svg.append(svgEl("rect", { x: m.l, width: iw, y: y(band[1]), height: Math.max(0, y(band[0]) - y(band[1])), fill: "var(--band)" }));
   for (const tv of ticks) {
     svg.append(svgEl("line", { x1: m.l, x2: m.l + iw, y1: y(tv), y2: y(tv), stroke: tv === 0 && zero ? "var(--ink-3)" : "var(--line)", "stroke-width": 1 }));
-    const tx = svgEl("text", { x: m.l - 8, y: y(tv) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--ink-3)" }); tx.textContent = tv; svg.append(tx);
+    const tx = svgEl("text", { x: m.l - 8, y: y(tv) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--ink-3)" }); tx.textContent = String(+tv.toFixed(4)); svg.append(tx);
   }
   // x 축: 월/분기 단위 라벨
   const months = (t1 - t0) / (30 * DAY), maxLabels = Math.max(2, Math.floor(iw / 60));
@@ -270,7 +282,7 @@ function lineChart(host, { dates, series, band, zero }) {
   for (let i = 1; i < ends.length; i++) ends[i].yy = Math.min(ends[i].yy, ends[i - 1].yy - 14);
   for (const e of ends) {
     const tx = svgEl("text", { x: m.l + iw + 8, y: e.yy + 4, "font-size": 11, fill: "var(--ink)" });
-    tx.textContent = `${e.s.label} ${fmt(e.v)}`; svg.append(tx);
+    tx.textContent = `${e.s.label} ${fmt(e.v, dp)}`; svg.append(tx);
   }
   // 크로스헤어 + 툴팁
   const cross = svgEl("line", { y1: m.t, y2: m.t + ih, stroke: "var(--ink-3)", "stroke-width": 1, visibility: "hidden" });
@@ -291,7 +303,7 @@ function lineChart(host, { dates, series, band, zero }) {
       const c = dots[r.k];
       if (r.v == null) c.setAttribute("visibility", "hidden");
       else { c.setAttribute("cx", x(dates[i])); c.setAttribute("cy", y(r.v)); c.setAttribute("visibility", "visible"); }
-      tip.append(el("div", { class: "r" }, [el("span", {}, [el("i", { style: `background:var(${r.s.color})` }), r.s.label]), el("b", { text: fmt(r.v, 1) + " bp" })]));
+      tip.append(el("div", { class: "r" }, [el("span", {}, [el("i", { style: `background:var(${r.s.color})` }), r.s.label]), el("b", { text: fmt(r.v, dp ? dp : 1) + (unit === "%" ? "%" : " bp") })]));
     }
     tip.style.display = "block";
     const tw = tip.offsetWidth, hw = host.clientWidth;
@@ -379,21 +391,26 @@ function render() {
     series: g2.map(g => ({ label: g, color: colorOf(g), values: t._pickup[g].slice(s0), hidden: state.hidden2.has(g) })),
   });
   const g1 = GRADES.map(x => x.g).filter(g => t.s[g]);
-  document.getElementById("spreadNote").textContent = `동일 잔존만기 국고채(${t.label}) 금리 대비, bp. 범례를 눌러 등급을 켜고 끌 수 있음.`;
-  legend(document.getElementById("lg1"), g1, state.hidden1, "hidden1");
+  const isY = state.mode === "yield";
+  const c1Grades = isY ? [TSY, ...g1] : g1;
+  document.getElementById("c1Title").textContent = isY ? "등급별 수익률 (민평)" : "국고채 대비 신용스프레드";
+  document.getElementById("spreadNote").textContent = isY
+    ? `수익률 = 국고채(${t.label}) 금리 + 등급 스프레드, %. 발행사 실제 조달금리 수준 — 보증 시 AAA 금리로 조달.`
+    : `동일 잔존만기 국고채(${t.label}) 금리 대비, bp. 범례를 눌러 등급을 켜고 끌 수 있음.`;
+  legend(document.getElementById("lg1"), c1Grades, state.hidden1, "hidden1");
   lineChart(document.getElementById("c1"), {
-    dates: sd,
-    series: g1.map(g => ({ label: g, color: colorOf(g), values: t.s[g].slice(s0), hidden: state.hidden1.has(g) })),
+    dates: sd, unit: isY ? "%" : "bp", dp: isY ? 2 : 0,
+    series: c1Grades.map(g => ({ label: g, color: colorOf(g), values: (isY ? t._yield[g] : t.s[g]).slice(s0), hidden: state.hidden1.has(g) })),
   });
 
   // 요약표
   const tb = document.getElementById("summary"); tb.textContent = "";
-  const head = ["등급", "국고대비(bp)", "1주", "1개월", "3년 %ile", "보증차익(bp)", "차익 1개월", "차익 3년 %ile", "순차익(bp)", "보증료 대비"];
+  const head = ["등급", "수익률(%)", "국고대비(bp)", "1주", "1개월", "3년 %ile", "보증차익(bp)", "차익 1개월", "차익 3년 %ile", "순차익(bp)", "보증료 대비"];
   tb.append(el("tr", {}, head.map(h => el("th", { text: h }))));
   for (const g of g1) {
     const a = t.s[g], p = t._pickup[g], li = lastIdx(a), isBase = g === "AAA" || g === "정부보증";
     const pv = p[lastIdx(p)], net = isBase || pv == null ? null : pv - f.prem;
-    const cells = [g, fmt(a[li], 1), fmtChg(change(dates, a, 7)), fmtChg(change(dates, a, 30)), pctile(dates, a)[0] ?? "–",
+    const cells = [g, fmt(t._yield[g][li], 2), fmt(a[li], 1), fmtChg(change(dates, a, 7)), fmtChg(change(dates, a, 30)), pctile(dates, a)[0] ?? "–",
       isBase ? "–" : fmt(pv, 1), isBase ? "–" : fmtChg(change(dates, p, 30)), isBase ? "–" : (pctile(dates, p)[0] ?? "–"),
       isBase ? "–" : fmt(net, 1), isBase ? "–" : (feeStatus(net, f) || "–")];
     tb.append(el("tr", { class: FOCUS.includes(g) ? "focus" : "" }, cells.map(c => el("td", { text: String(c) }))));
@@ -401,10 +418,10 @@ function render() {
 
   // 원자료 표
   const raw = document.getElementById("raw"); raw.textContent = "";
-  const cols = ["국고채(%)", ...Object.keys(t.s)];
+  const cols = ["국고채(%)", ...Object.keys(t.s).map(g => g + (isY ? "(%)" : "(bp)"))];
   raw.append(el("tr", {}, ["기준일", ...cols].map(h => el("th", { text: h }))));
   for (let i = dates.length - 1; i >= Math.max(0, dates.length - 60); i--) {
-    raw.append(el("tr", {}, [dLabel(dates[i]), fmt(t.gov[i], 3), ...Object.keys(t.s).map(g => fmt(t.s[g][i], 1))].map(c => el("td", { text: c }))));
+    raw.append(el("tr", {}, [dLabel(dates[i]), fmt(t.gov[i], 3), ...Object.keys(t.s).map(g => isY ? fmt(t._yield[g][i], 2) : fmt(t.s[g][i], 1))].map(c => el("td", { text: c }))));
   }
 }
 
@@ -420,6 +437,7 @@ function seg(host, items, isOn, onPick) {
 function init() {
   if (!DATA || !DATA.tenors || !DATA.tenors.length) { document.getElementById("asof").textContent = "데이터 없음"; return; }
   seg(document.getElementById("tenorSeg"), DATA.tenors, (t, i) => i === state.tenor, (t, i) => { state.tenor = i; store.set("tenor", i); });
+  seg(document.getElementById("modeSeg"), MODES, m => m.k === state.mode, m => { state.mode = m.k; store.set("mode", m.k); });
   seg(document.getElementById("rangeSeg"), RANGES, r => r[0] === state.range, r => { state.range = r[0]; store.set("range", r[0]); });
   for (const id of ["feeLo", "feeHi", "prem"]) {
     const n = document.getElementById(id), saved = store.get(id, null);
