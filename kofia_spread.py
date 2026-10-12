@@ -13,8 +13,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # ===== 환경변수 =====
-MONTHS       = int(os.getenv("MONTHS", "3"))
+MONTHS       = int(os.getenv("MONTHS", "3"))        # 조회기간(개월) — 화면의 '조회일' from~to
 BOND_GB      = os.getenv("BOND_GB", "7")
+# 잔존만기 — KOFIA remainDayCnt (화면 라벨은 '조회기간'이지만 실제는 잔존만기 선택칸 schRemainDayCnt)
+REMAIN_DAY_CNT = os.getenv("REMAIN_DAY_CNT", "3")   # 메일용: 3 = 국고 3개월물
+# 대시보드 이력용 잔존만기 목록 (콤마). 코드 = 개월 수: 3·6·9·12·18·24·30·36·60
+HISTORY_TENORS = [x.strip() for x in os.getenv("HISTORY_TENORS", REMAIN_DAY_CNT).split(",") if x.strip()]
+BACKFILL_MONTHS = int(os.getenv("BACKFILL_MONTHS", "0") or 0)   # >0: 이력 일괄 적재(수동 실행)
 SENDER_EMAIL = os.environ["SENDER_EMAIL"]
 SENDER_PW    = os.environ["SENDER_PW"]
 RECIPIENTS   = [x.strip() for x in os.environ["RECIPIENTS"].split(",") if x.strip()]
@@ -49,8 +54,8 @@ HEADERS = {
 s = requests.Session()
 s.get(REFERER, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=15)
 
-def fetch(to_dt, months, bond_gb="7", wrk_gbn="TBOND_SPRD"):
-    from_dt = (datetime.strptime(to_dt, "%Y%m%d") - relativedelta(months=months)).strftime("%Y%m%d")
+def fetch(to_dt, months, bond_gb="7", wrk_gbn="TBOND_SPRD", remain_cnt=REMAIN_DAY_CNT, from_dt=None):
+    from_dt = from_dt or (datetime.strptime(to_dt, "%Y%m%d") - relativedelta(months=months)).strftime("%Y%m%d")
     body = f"""<?xml version="1.0" encoding="utf-8"?>
 <message>
   <proframeHeader>
@@ -61,7 +66,7 @@ def fetch(to_dt, months, bond_gb="7", wrk_gbn="TBOND_SPRD"):
   <systemHeader></systemHeader>
   <BISSprdIdxDTO>
     <wrkGbn>{wrk_gbn}</wrkGbn>
-    <remainDayCnt>{months}</remainDayCnt>
+    <remainDayCnt>{remain_cnt}</remainDayCnt>
     <bondGbCode>{bond_gb}</bondGbCode>
     <standardDt>{from_dt}</standardDt>
     <uStandardDt>{to_dt}</uStandardDt>
@@ -107,6 +112,39 @@ out_path = OUT_DIR / f"kofia_corp_spread_{TO_DT}.xlsx"
 with pd.ExcelWriter(out_path, engine="openpyxl") as xw:
     df.to_excel(xw, sheet_name="회사채_신용스프레드", index=False)
 print(f"저장: {out_path}")
+
+# ============ 이력 누적 + HTML 대시보드 (실패해도 메일은 발송) ============
+def collect_history(to_dt, tenor, months, chunk_months=12):
+    """months 기간을 chunk_months 단위로 나눠 조회."""
+    end = datetime.strptime(to_dt, "%Y%m%d")
+    start = end - relativedelta(months=months)
+    frames, names, cur_end = [], [], end
+    while cur_end > start:
+        cur_start = max(start, cur_end - relativedelta(months=chunk_months))
+        r = fetch(cur_end.strftime("%Y%m%d"), 0, BOND_GB, remain_cnt=tenor,
+                  from_dt=cur_start.strftime("%Y%m%d"))
+        names = parse_ratings(r) or names
+        part = parse_body(r, names)
+        if not part.empty: frames.append(part)
+        cur_end = cur_start - timedelta(days=1)
+    return pd.concat(frames).drop_duplicates("기준일") if frames else pd.DataFrame()
+
+try:
+    import spread_analytics as sa, spread_dashboard as sd
+    hist = sa.load_history(sa.HISTORY_PATH)
+    print(f"이력 로드: {len(hist)}행")
+    for tenor in HISTORY_TENORS:
+        if tenor == REMAIN_DAY_CNT and BACKFILL_MONTHS <= MONTHS:
+            part = df                                   # 메일용 수집분 재사용
+        else:
+            part = collect_history(TO_DT, tenor, max(MONTHS, BACKFILL_MONTHS))
+        print(f"[잔존만기 {tenor}] {len(part)}행")
+        hist = sa.upsert_history(hist, sa.wide_to_long(part, tenor))
+    sa.save_history(hist, sa.HISTORY_PATH)
+    print(f"이력 저장: {len(hist)}행 → {sa.HISTORY_PATH}")
+    print(f"대시보드: {sd.build_dashboard(hist, TO_DT)}")
+except Exception as e:
+    print(f"[경고] 이력/대시보드 갱신 실패 — 메일은 계속 발송: {type(e).__name__}: {e}")
 
 # ============ Gmail 발송 ============
 def send_via_gmail(host, port, sender, pw, recipients, msg):

@@ -170,6 +170,74 @@ Gmail SMTP 첨부 한도는 **25MB** 입니다. 조회 기간을 12개월 이상
 
 ---
 
+## 📈 스프레드 이력 · ABS보증 차익 대시보드 (v2.0)
+
+메일은 v1.2와 동일하게 발송하고, 그와 별도로 **이력을 누적해 HTML 대시보드를 저장소에 커밋**합니다.
+
+| 결과물 | 경로 | 비고 |
+|---|---|---|
+| 이력 원자료 | `data/spread_history.csv` | long 형식 `date, tenor, grade, value` (국고채=금리 %, 등급=국고 대비 스프레드 %p) |
+| 대시보드 | `docs/index.html` | 외부 라이브러리 없는 단일 HTML. 내려받아 열거나 GitHub Pages로 열람 |
+
+- 실행 순서: 메일용 수집·엑셀 저장 → 이력/대시보드 갱신 → 메일 발송. 이력/대시보드 단계가 실패해도 **메일은 그대로 발송**
+- 워크플로우가 실행 후 `data/`, `docs/` 변경분을 main에 커밋 (keepalive 효과도 겸함)
+- GitHub Pages: Settings → Pages → Branch `main` / 폴더 `/docs` → `https://everyday267.github.io/kofia_spread_new/`
+
+### 대시보드 구성
+
+- 잔존만기 · 표시기간(6M/1Y/3Y/5Y/전체) 선택
+- 보증료 밴드 · SGI보증물 프리미엄 입력칸 (브라우저에 기억)
+- AA- / A+ / A / A- **보증차익** 타일: 최근값, 1개월 변동, 3년 %ile, 보증료 대비 순차익
+- 신호: 보증차익 3년 상위 20% · 1주 ±10bp 급변 · A-↔BBB+ 격차 1개월 +10bp 확대
+- 차트 2종(마우스 오버 시 일자별 값): 보증차익 + 보증료 밴드 / 등급별 **[스프레드(bp) ↔ 수익률(%)] 전환** 차트(수익률 모드에는 국고채 선 포함)
+- 요약표에 등급별 수익률(%) 칸 (수익률 = 국고채 금리 + 스프레드)
+- 등급별 요약표, 최근 60영업일 원자료 표
+
+| 지표 | 계산 |
+|---|---|
+| 국고대비(bp) | KOFIA 등급 값(%p) × 100 |
+| 보증차익(bp) | 해당 등급 스프레드 − AAA 스프레드 (동일 잔존만기) |
+| 순차익(bp) | 보증차익 − SGI보증물 프리미엄 |
+| %ile | 최근 3년 분포 내 위치 (높을수록 스프레드 넓음) |
+
+### KOFIA 요청 코드 (2026-10-12 화면 컴포넌트에서 확인)
+
+| 화면 항목 | 요청 필드 | 값 |
+|---|---|---|
+| 스프레드 / 수익률 | `wrkGbn` | `TBOND_SPRD`(국고 대비 스프레드) / `BOND_ROP`(수익률) |
+| 채권종류 | `bondGbCode` | 특수채 `3` · 은행채 `5` · 기타금융채 `6` · **회사채 `7`** |
+| 잔존만기 (화면 라벨은 '조회기간') | `remainDayCnt` | 개월 수: `3` `6` `9` `12` `18` `24` `30` `36` `60` |
+| 조회일 from~to | `standardDt` ~ `uStandardDt` | `YYYYMMDD` |
+
+- 응답의 기준일(`standardDt`)은 `YYYY-MM-DD` 형식 → 이력에서는 `YYYYMMDD`로 정규화
+- `TBOND_SPRD` 응답: `val1` = 국고채 금리(%), `val2~` = 등급별 스프레드(%p). 회사채는 AAA~BBB- 10개 등급
+- 수익률 = 국고채 금리 + 스프레드로 계산 가능 (`BOND_ROP` 응답과 0.01%p 이내로 일치 확인)
+- 5년치 단건 조회도 응답함(약 9초). 백필은 12개월 단위로 분할 조회
+- v1.2는 `remainDayCnt`에 `MONTHS`를 넣었지만 값이 3이라 3개월물이 맞게 조회되고 있었음. v2.0에서 분리
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `REMAIN_DAY_CNT` | `3` | 메일용 잔존만기 (3 = 국고 3개월물) |
+| `HISTORY_TENORS` | `3,12,36` (workflow) | 대시보드에 쌓을 잔존만기 목록 |
+| `BACKFILL_MONTHS` | `0` | Run workflow 입력값. 예: `60` → 5년치 적재 |
+
+### 최초 1회
+
+1. Settings → Actions → General → Workflow permissions = **Read and write**
+2. Actions → `KOFIA Corp Bond Spread` → Run workflow → `backfill_months` = `60` (2022.10 경색 구간 포함)
+3. (선택) Settings → Pages → `main` / `/docs`
+
+### 오프라인 점검
+
+```bash
+python tests/test_real_fixture.py              # 실제 응답 구조(fixtures)로 파서·이력·대시보드 점검
+python tests/offline_run.py                    # 합성 XML로 수집→메일(.eml)→이력→대시보드까지 실행 (임시 폴더)
+BACKFILL_MONTHS=60 python tests/offline_run.py # 백필 경로
+python spread_dashboard.py                     # data/spread_history.csv만으로 docs/index.html 재생성
+```
+
+---
+
 ## 📜 의존성
 
 ```
@@ -190,3 +258,4 @@ Python 3.11+ 권장.
 - v1.0 — 초기 버전 (Zoho → Gmail SMTP 전환, GitHub Actions 자동화)
 - v1.1 — 영업일 체크 버그 수정 (`pass` → `sys.exit(0)`), cron KST 08:30 적용
 - v1.2 - 영업일 체크를 workflow단에서 체크하여 skip여부 결정, cron KST 06:30 적용
+- v2.0 — 메일은 v1.2 유지. 이력 누적(data/spread_history.csv) + HTML 대시보드(docs/index.html) 커밋, 백필, remainDayCnt(잔존만기)/조회기간 분리
