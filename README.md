@@ -177,6 +177,7 @@ Gmail SMTP 첨부 한도는 **25MB** 입니다. 조회 기간을 12개월 이상
 | 결과물 | 경로 | 비고 |
 |---|---|---|
 | 이력 원자료 | `data/spread_history.csv` | long 형식 `date, tenor, grade, value` (국고채=금리 %, 등급=국고 대비 스프레드 %p) |
+| 만기별 엑셀 | `docs/kofia_corp_spread_history.xlsx` | 메일 첨부와 같은 양식(기준일·국고채금리·AAA~BBB-), 잔존만기별 탭(3개월물~5년물). 대시보드 우측 상단 [만기별 엑셀 내려받기] |
 | 대시보드 | `docs/index.html` | 외부 라이브러리 없는 단일 HTML. 내려받아 열거나 GitHub Pages로 열람 |
 
 - 실행 순서: 메일용 수집·엑셀 저장 → 이력/대시보드 갱신 → 메일 발송. 이력/대시보드 단계가 실패해도 **메일은 그대로 발송**
@@ -232,7 +233,8 @@ Gmail SMTP 첨부 한도는 **25MB** 입니다. 조회 기간을 12개월 이상
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `REMAIN_DAY_CNT` | `3` | 메일용 잔존만기 (3 = 국고 3개월물) |
-| `HISTORY_TENORS` | `3,12,36` (workflow) | 대시보드에 쌓을 잔존만기 목록 |
+| `HISTORY_TENORS` | `3,6,9,12,18,24,30,36,60` (workflow) | 이력에 쌓을 잔존만기 목록 |
+| `NEW_TENOR_BACKFILL_MONTHS` | `60` | 이력에 없는 만기를 처음 받을 때 자동 적재 기간 |
 | `BACKFILL_MONTHS` | `0` | Run workflow 입력값. 예: `60` → 5년치 적재 |
 
 ### 최초 1회

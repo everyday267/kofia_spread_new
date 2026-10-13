@@ -20,6 +20,7 @@ REMAIN_DAY_CNT = os.getenv("REMAIN_DAY_CNT", "3")   # 메일용: 3 = 국고 3개
 # 대시보드 이력용 잔존만기 목록 (콤마). 코드 = 개월 수: 3·6·9·12·18·24·30·36·60
 HISTORY_TENORS = [x.strip() for x in os.getenv("HISTORY_TENORS", REMAIN_DAY_CNT).split(",") if x.strip()]
 BACKFILL_MONTHS = int(os.getenv("BACKFILL_MONTHS", "0") or 0)   # >0: 이력 일괄 적재(수동 실행)
+NEW_TENOR_BACKFILL_MONTHS = int(os.getenv("NEW_TENOR_BACKFILL_MONTHS", "60"))  # 이력에 없는 만기는 자동으로 이만큼 적재
 SENDER_EMAIL = os.environ["SENDER_EMAIL"]
 SENDER_PW    = os.environ["SENDER_PW"]
 RECIPIENTS   = [x.strip() for x in os.environ["RECIPIENTS"].split(",") if x.strip()]
@@ -130,19 +131,22 @@ def collect_history(to_dt, tenor, months, chunk_months=12):
     return pd.concat(frames).drop_duplicates("기준일") if frames else pd.DataFrame()
 
 try:
-    import spread_analytics as sa, spread_dashboard as sd
+    import spread_analytics as sa, spread_dashboard as sd, spread_export as se
     hist = sa.load_history(sa.HISTORY_PATH)
     print(f"이력 로드: {len(hist)}행")
+    known = set(hist["tenor"].astype(str))
     for tenor in HISTORY_TENORS:
-        if tenor == REMAIN_DAY_CNT and BACKFILL_MONTHS <= MONTHS:
+        months = max(MONTHS, BACKFILL_MONTHS, 0 if tenor in known else NEW_TENOR_BACKFILL_MONTHS)
+        if tenor == REMAIN_DAY_CNT and months <= MONTHS:
             part = df                                   # 메일용 수집분 재사용
         else:
-            part = collect_history(TO_DT, tenor, max(MONTHS, BACKFILL_MONTHS))
+            part = collect_history(TO_DT, tenor, months)
         print(f"[잔존만기 {tenor}] {len(part)}행")
         hist = sa.upsert_history(hist, sa.wide_to_long(part, tenor))
     sa.save_history(hist, sa.HISTORY_PATH)
     print(f"이력 저장: {len(hist)}행 → {sa.HISTORY_PATH}")
     print(f"대시보드: {sd.build_dashboard(hist, TO_DT)}")
+    print(f"만기별 엑셀: {se.build_workbook(hist)}")
 except Exception as e:
     print(f"[경고] 이력/대시보드 갱신 실패 — 메일은 계속 발송: {type(e).__name__}: {e}")
 

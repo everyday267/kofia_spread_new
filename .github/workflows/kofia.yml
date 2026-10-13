@@ -43,7 +43,7 @@ jobs:
       contents: write          # data/ · docs/ 커밋용
     if: needs.check-businessday.outputs.is_open == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +60,7 @@ jobs:
           MONTHS: "3"
           BOND_GB: "7"
           REMAIN_DAY_CNT: "3"                # 메일용 잔존만기 (3 = 국고 3개월물)
-          HISTORY_TENORS: "3,12,36"          # 대시보드 잔존만기 (3개월·1년·3년)
+          HISTORY_TENORS: "3,6,9,12,18,24,30,36,60"   # 잔존만기 전체 (이력에 없는 만기는 자동 5년 적재)
           BACKFILL_MONTHS: ${{ github.event.inputs.backfill_months || '0' }}
           SENDER_EMAIL: ${{ secrets.GMAIL_SENDER }}
           SENDER_PW:    ${{ secrets.GMAIL_APP_PW }}
